@@ -12,8 +12,15 @@ clip/
 gpt/
 bert/
 logs/
-agent_runs/
 
 *.mp4
 libero.egg-info/
 .vscode/
+
+# Evaluator-local runs, credentials, and generated absolute-path configuration.
+/agent_runs/
+/ghp
+/libero/config.yaml
+
+# Machine-local link to the shared, versioned NVIDIA userspace driver bundles.
+/runtime/nvidia
