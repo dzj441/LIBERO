@@ -435,22 +435,27 @@ class BDDLBaseDomain(SingleArmEnv):
 
         observables["robot0_joint_pos"]._active = True
 
+        # Object pose observables are privileged for the agent benchmark.  The
+        # original implementation still created them when use_object_obs was
+        # false (and referenced uninitialized local variables in that path).
+        if not self.use_object_obs:
+            return observables
+
         # low-level object information
-        if self.use_object_obs:
-            # Get robot prefix and define observables modality
-            pf = self.robots[0].robot_model.naming_prefix
-            sensors = []
-            names = [s.__name__ for s in sensors]
+        # Get robot prefix and define observables modality
+        pf = self.robots[0].robot_model.naming_prefix
+        sensors = []
+        names = [s.__name__ for s in sensors]
 
-            # Also append handle qpos if we're using a locked drawer version with rotatable handle
+        # Also append handle qpos if we're using a locked drawer version with rotatable handle
 
-            # Create observables
-            for name, s in zip(names, sensors):
-                observables[name] = Observable(
-                    name=name,
-                    sensor=s,
-                    sampling_rate=self.control_freq,
-                )
+        # Create observables
+        for name, s in zip(names, sensors):
+            observables[name] = Observable(
+                name=name,
+                sensor=s,
+                sampling_rate=self.control_freq,
+            )
 
         pf = self.robots[0].robot_model.naming_prefix
 
