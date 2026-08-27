@@ -134,7 +134,7 @@ def _make_run(tmp_path: Path) -> tuple[RunRepository, Path, Path]:
                 "command": [
                     "/bin/bash",
                     "-lc",
-                    "liberoctl step --position 0 0 0 --rotation 0 0 0 --gripper-delta-m 0",
+                    "liberoctl osc-step --position 0 0 0 --rotation 0 0 0 --gripper-delta-m 0",
                 ],
                 "status": "completed",
                 "stdout": '{"ok":true}',
@@ -153,7 +153,7 @@ def _make_run(tmp_path: Path) -> tuple[RunRepository, Path, Path]:
             },
             {
                 "request": {
-                    "command": "step",
+                    "command": "osc_step",
                     "delta_position_m": [0, 0, 0],
                     "delta_rotation_rotvec_rad": [0, 0, 0],
                     "delta_gripper_width_m": 0,
@@ -197,7 +197,7 @@ def test_viewer_aligns_codex_session_with_actions(tmp_path: Path) -> None:
         "session_robot_commands": 2,
         "matched_robot_commands": 2,
     }
-    assert [step["command"] for step in detail["steps"]] == ["start", "step"]
+    assert [step["command"] for step in detail["steps"]] == ["start", "osc_step"]
     assert detail["steps"][1]["output_observation"]["observation_id"] == "obs_000001"
     assert detail["summary"]["task_instruction"] == "Pick up the object."
 

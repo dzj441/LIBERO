@@ -18,7 +18,9 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 STATIC_FILENAMES = frozenset({"index.html", "app.js", "styles.css"})
 OBSERVATION_ID = re.compile(r"obs_\d{6}")
-ROBOT_COMMAND = re.compile(r"(?:^|\s)liberoctl\s+(start|step|finish)\b")
+ROBOT_COMMAND = re.compile(
+    r"(?:^|\s)liberoctl\s+(start|step|osc-step|osc-sequence|finish)\b"
+)
 TEXT_LIMIT = 24_000
 COLLECTION_LIMIT = 200
 
@@ -177,7 +179,7 @@ def _command_text(value: Any) -> str:
 
 def _robot_command(value: str) -> str | None:
     match = ROBOT_COMMAND.search(value)
-    return match.group(1) if match else None
+    return match.group(1).replace("-", "_") if match else None
 
 
 def _session_origin(records: Iterable[Mapping[str, Any]]) -> datetime | None:
