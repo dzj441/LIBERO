@@ -3,9 +3,43 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
+
+
+MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION = 20
+MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS = 50
+
+
+class ActionInterface(str, Enum):
+    """Public robot-control condition selected for one benchmark run."""
+
+    METRIC_OSC_STEP = "metric_osc_step"
+    NATIVE_OSC_SEQUENCE = "native_osc_sequence"
+
+    @classmethod
+    def parse(cls, value: "ActionInterface | str") -> "ActionInterface":
+        if isinstance(value, cls):
+            return value
+        try:
+            return cls(str(value))
+        except ValueError as exc:
+            choices = ", ".join(member.value for member in cls)
+            raise ValueError(
+                f"unknown action interface {value!r}; expected one of {choices}"
+            ) from exc
+
+    @property
+    def wire_command(self) -> str:
+        if self is ActionInterface.METRIC_OSC_STEP:
+            return "osc_step"
+        return "osc_sequence"
+
+    @property
+    def cli_operation(self) -> str:
+        return self.wire_command.replace("_", "-")
 
 
 @dataclass(frozen=True)
@@ -110,6 +144,84 @@ class EEFExecution:
             "commanded_gripper_width_m": self.commanded_gripper_width_m,
             "actual_gripper_width_m": self.actual_gripper_width_m,
         }
+
+
+@dataclass(frozen=True)
+class NativeOSCSequenceExecution:
+    """Safe metadata for one accepted native OSC micro-action sequence."""
+
+    command_completed: bool
+    termination_reason: str
+    micro_step_count: int
+    control_steps: int
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "command_completed": self.command_completed,
+            "termination_reason": self.termination_reason,
+            "micro_step_count": self.micro_step_count,
+            "control_steps": self.control_steps,
+        }
+
+
+class NativeOSCSequenceExecutor:
+    """Execute an exact bounded sequence of normalized LIBERO OSC actions."""
+
+    def __init__(
+        self,
+        env: Any,
+        control_step_callback: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> None:
+        self.env = env
+        self.control_step_callback = control_step_callback
+
+    def execute(
+        self, actions: Sequence[Sequence[float]]
+    ) -> tuple[dict[str, Any], NativeOSCSequenceExecution]:
+        sequence = validate_native_osc_sequence(actions)
+        raw_observation: dict[str, Any] | None = None
+        for action in sequence:
+            raw_observation, _reward, _done, _info = self.env.step(action)
+            if self.control_step_callback is not None:
+                self.control_step_callback(raw_observation)
+        if raw_observation is None:  # Defensive; validation rejects an empty batch.
+            raise RuntimeError("native OSC sequence produced no observation")
+        count = int(sequence.shape[0])
+        return raw_observation, NativeOSCSequenceExecution(
+            command_completed=True,
+            termination_reason="sequence_executed",
+            micro_step_count=count,
+            control_steps=count,
+        )
+
+
+def validate_native_osc_sequence(
+    actions: Sequence[Sequence[float]],
+) -> np.ndarray:
+    """Validate without clipping so accepted actions retain dataset semantics."""
+
+    try:
+        sequence = np.asarray(actions, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("actions must be a rectangular numeric array") from exc
+    if sequence.size == 0:
+        raise ValueError(
+            "actions must contain between 1 and "
+            f"{MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION} micro steps"
+        )
+    if sequence.ndim != 2 or sequence.shape[1:] != (7,):
+        raise ValueError("actions must have shape [N, 7]")
+    count = int(sequence.shape[0])
+    if not 1 <= count <= MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION:
+        raise ValueError(
+            "actions must contain between 1 and "
+            f"{MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION} micro steps"
+        )
+    if not np.all(np.isfinite(sequence)):
+        raise ValueError("actions must contain only finite numbers")
+    if np.any(np.abs(sequence) > 1.0):
+        raise ValueError("native OSC action components must be within [-1, 1]")
+    return sequence.copy()
 
 
 class BaseFrameOSCExecutor:

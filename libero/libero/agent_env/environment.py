@@ -6,17 +6,23 @@ from typing import Any, Callable, Mapping, Sequence
 
 import numpy as np
 
-from .control import BaseFrameOSCExecutor, EEFCommand, OSCControlConfig
+from .control import (
+    MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS,
+    BaseFrameOSCExecutor,
+    EEFCommand,
+    NativeOSCSequenceExecutor,
+    OSCControlConfig,
+)
 from .observation import AnnotationRoles, MasterObservationCollector
 from .profiles import ObservationProfile, project_public_observation
 
 
 class LiberoAgentEnv:
-    """Expose start_episode / step_osc_target / finish_episode without private state.
+    """Expose one stateful Agent action at a time without private task state.
 
     Reward and task checker outputs are intentionally withheld until
-    ``finish_episode``.  Every accepted ``step_osc_target`` returns the actual
-    post-execution observation from the same simulator trajectory.
+    ``finish_episode``. Every accepted metric target or native OSC sequence
+    returns the actual post-execution observation from the same trajectory.
     """
 
     def __init__(
@@ -60,6 +66,10 @@ class LiberoAgentEnv:
             control_config,
             control_step_callback=private_control_step_callback,
         )
+        self.native_sequence_executor = NativeOSCSequenceExecutor(
+            env,
+            control_step_callback=private_control_step_callback,
+        )
         self._started = False
         self._finished = False
         self._agent_step_index = 0
@@ -94,14 +104,38 @@ class LiberoAgentEnv:
         delta_gripper_width_m: float = 0.0,
     ) -> dict[str, Any]:
         self._require_active()
-        if self.max_agent_steps is not None and self._agent_step_index >= self.max_agent_steps:
-            raise RuntimeError(f"agent step limit reached ({self.max_agent_steps})")
+        self._require_agent_step_budget(self.max_agent_steps)
         command = EEFCommand.create(
             delta_position_m=delta_position_m,
             delta_rotation_rotvec_rad=delta_rotation_rotvec_rad,
             delta_gripper_width_m=delta_gripper_width_m,
         )
         raw_observation, execution = self.executor.execute(command)
+        self._latest_raw_observation = raw_observation
+        self._agent_step_index += 1
+        return {
+            "accepted_agent_step": self._agent_step_index,
+            "execution": execution.to_public_dict(),
+            "observation": self._public_observation(
+                frame_index=self._agent_step_index
+            ),
+        }
+
+    def step_osc_sequence(
+        self,
+        actions: Sequence[Sequence[float]],
+    ) -> dict[str, Any]:
+        """Execute 1--20 exact normalized OSC actions as one Agent submission."""
+
+        self._require_active()
+        configured_limit = self.max_agent_steps
+        sequence_limit = (
+            MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS
+            if configured_limit is None
+            else min(configured_limit, MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS)
+        )
+        self._require_agent_step_budget(sequence_limit)
+        raw_observation, execution = self.native_sequence_executor.execute(actions)
         self._latest_raw_observation = raw_observation
         self._agent_step_index += 1
         return {
@@ -135,3 +169,7 @@ class LiberoAgentEnv:
             raise RuntimeError("start_episode must be called first")
         if self._finished:
             raise RuntimeError("episode has already finished")
+
+    def _require_agent_step_budget(self, limit: int | None) -> None:
+        if limit is not None and self._agent_step_index >= limit:
+            raise RuntimeError(f"agent step limit reached ({limit})")

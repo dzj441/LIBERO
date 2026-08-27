@@ -9,34 +9,49 @@ import os
 from pathlib import Path
 import socket
 import sys
-from typing import Any
+from typing import Any, Sequence
 
 
 MAX_RESPONSE_BYTES = 1024 * 1024
+MAX_ACTION_FILE_BYTES = 256 * 1024
+METRIC_OSC_STEP = "metric_osc_step"
+NATIVE_OSC_SEQUENCE = "native_osc_sequence"
+ACTION_INTERFACES = frozenset({METRIC_OSC_STEP, NATIVE_OSC_SEQUENCE})
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(
+    argv: Sequence[str] | None = None,
+    *,
+    action_interface: str | None = None,
+) -> argparse.Namespace:
+    action_interface = action_interface or configured_action_interface()
+    if action_interface not in ACTION_INTERFACES:
+        raise ValueError(f"unsupported LIBERO action interface: {action_interface!r}")
     parser = argparse.ArgumentParser(prog="liberoctl")
     subparsers = parser.add_subparsers(dest="operation", required=True)
     subparsers.add_parser("start")
-    step = subparsers.add_parser("osc-step")
-    step.add_argument(
-        "--position",
-        type=float,
-        nargs=3,
-        metavar=("DX", "DY", "DZ"),
-        default=(0.0, 0.0, 0.0),
-    )
-    step.add_argument(
-        "--rotation",
-        type=float,
-        nargs=3,
-        metavar=("RX", "RY", "RZ"),
-        default=(0.0, 0.0, 0.0),
-    )
-    step.add_argument("--gripper-delta-m", type=float, default=0.0)
+    if action_interface == METRIC_OSC_STEP:
+        step = subparsers.add_parser("osc-step")
+        step.add_argument(
+            "--position",
+            type=float,
+            nargs=3,
+            metavar=("DX", "DY", "DZ"),
+            default=(0.0, 0.0, 0.0),
+        )
+        step.add_argument(
+            "--rotation",
+            type=float,
+            nargs=3,
+            metavar=("RX", "RY", "RZ"),
+            default=(0.0, 0.0, 0.0),
+        )
+        step.add_argument("--gripper-delta-m", type=float, default=0.0)
+    else:
+        sequence = subparsers.add_parser("osc-sequence")
+        sequence.add_argument("--actions-file", type=Path, required=True)
     subparsers.add_parser("finish")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def request_for_args(args: argparse.Namespace) -> dict[str, Any]:
@@ -44,12 +59,31 @@ def request_for_args(args: argparse.Namespace) -> dict[str, Any]:
         return {"command": "start"}
     if args.operation == "finish":
         return {"command": "finish"}
+    if args.operation == "osc-sequence":
+        return {
+            "command": "osc_sequence",
+            "actions": load_actions_file(args.actions_file),
+        }
     return {
         "command": "osc_step",
         "delta_position_m": list(args.position),
         "delta_rotation_rotvec_rad": list(args.rotation),
         "delta_gripper_width_m": args.gripper_delta_m,
     }
+
+
+def configured_action_interface() -> str:
+    return os.environ.get("LIBERO_ACTION_INTERFACE", METRIC_OSC_STEP)
+
+
+def load_actions_file(path: str | Path) -> list[Any]:
+    path = Path(path)
+    if path.stat().st_size > MAX_ACTION_FILE_BYTES:
+        raise ValueError("OSC action file exceeds client size limit")
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, list):
+        raise ValueError("OSC action file must contain one JSON array")
+    return value
 
 
 def control_socket_path() -> Path:

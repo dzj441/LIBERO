@@ -127,6 +127,7 @@ function renderRunHeader(detail) {
   elements.summaryGrid.replaceChildren(
     summaryItem("Profile", summary.profile),
     summaryItem("ICL", summary.icl),
+    summaryItem("Action interface", summary.action_interface),
     summaryItem("Robot steps", summary.accepted_agent_steps ?? summary.action_count),
     summaryItem("Session", session.session_id || "unavailable"),
     summaryItem("CLI", session.cli_version),
@@ -360,7 +361,7 @@ async function loadRuns() {
       const option = document.createElement("option");
       option.value = run.id;
       const result = run.success === true ? "✓" : run.success === false ? "×" : "…";
-      option.textContent = `${result} ${run.name} · ${run.profile || "?"} · ${run.icl || "none"}`;
+      option.textContent = `${result} ${run.name} · ${run.profile || "?"} · ${run.icl || "none"} · ${run.action_interface || "legacy"}`;
       elements.runSelect.append(option);
     }
     if (!state.runs.length) throw new Error("Runs root 中没有可显示的 LIBERO Agent run。 ");

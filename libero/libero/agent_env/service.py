@@ -14,11 +14,12 @@ from typing import Any, Mapping
 import numpy as np
 
 from .artifacts import replace_current_public_observation
+from .control import ActionInterface
 from .environment import LiberoAgentEnv
 
 
 class AgentEpisodeService:
-    """Expose exactly start / osc_step / finish and keep private audit data."""
+    """Expose one selected robot action command and keep private audit data."""
 
     def __init__(
         self,
@@ -27,8 +28,10 @@ class AgentEpisodeService:
         workspace_directory: str | Path,
         current_observation_directory: str | Path,
         private_run_directory: str | Path | None = None,
+        action_interface: ActionInterface | str = ActionInterface.METRIC_OSC_STEP,
     ) -> None:
         self.agent_env = agent_env
+        self.action_interface = ActionInterface.parse(action_interface)
         self.workspace_directory = Path(workspace_directory).resolve()
         self.current_observation_directory = Path(
             current_observation_directory
@@ -54,12 +57,23 @@ class AgentEpisodeService:
         command = request.get("command")
         if command == "start":
             response = self._start()
-        elif command == "osc_step":
+        elif (
+            command == "osc_step"
+            and self.action_interface is ActionInterface.METRIC_OSC_STEP
+        ):
             response = self._osc_step(request)
+        elif (
+            command == "osc_sequence"
+            and self.action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
+        ):
+            response = self._osc_sequence(request)
         elif command == "finish":
             response = self._finish()
         else:
-            raise ValueError("unknown command; expected start, osc_step, or finish")
+            raise ValueError(
+                "unknown command; expected start, "
+                f"{self.action_interface.wire_command}, or finish"
+            )
         self._record_event(request=request, response=response)
         return response
 
@@ -113,6 +127,19 @@ class AgentEpisodeService:
             ),
             delta_gripper_width_m=request.get("delta_gripper_width_m", 0.0),
         )
+        observation = result["observation"]
+        observation_file = self._publish(observation)
+        return {
+            "ok": True,
+            "observation_id": observation["observation_id"],
+            "observation_file": observation_file,
+            "execution": result["execution"],
+        }
+
+    def _osc_sequence(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        if self.state != "active":
+            raise RuntimeError("osc_sequence requires one active episode")
+        result = self.agent_env.step_osc_sequence(actions=request.get("actions", ()))
         observation = result["observation"]
         observation_file = self._publish(observation)
         return {

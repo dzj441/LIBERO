@@ -93,8 +93,8 @@ normalized OSC components would be incorrect.
 
 ## Native OSC sequence A/B design record
 
-The metric `osc-step` interface remains the default. A subsequent controlled
-A/B will add a mutually exclusive native `osc-sequence` condition so that an
+The metric `osc-step` interface remains the default. A controlled A/B can
+select a mutually exclusive native `osc-sequence` condition so that an
 Agent can use the same per-control-cycle action semantics as the source LIBERO
 demonstrations without an offline conversion to Agent-specific macro actions.
 
@@ -103,9 +103,9 @@ One accepted `osc-sequence` submission contains between 1 and 20 normalized
 `[dx, dy, dz, rx, ry, rz, gripper]`; every finite component must be within
 `[-1, 1]`. The server executes the vectors sequentially, with exactly one
 LIBERO policy interval per micro action, and returns one actual observation
-after the submitted sequence. Intermediate simulation frames and
-proprioception remain evaluator-private but are retained in the continuous
-audit recording.
+after the submitted sequence. Intermediate simulation frames remain
+evaluator-private and are retained in the continuous audit video; no
+intermediate public observation is materialized.
 
 A native-sequence run permits at most 50 accepted submissions, so its total
 public control budget is bounded by 1,000 native policy intervals. One run
@@ -118,19 +118,20 @@ existing meanings, and only `finish` exposes official task success.
 The stateful interface is:
 
 ```text
-start_episode -> observation 0
-osc_step      -> execution metadata + actual next observation
-finish_episode -> final official success boolean
+start_episode           -> observation 0
+osc_step | osc_sequence -> execution metadata + actual next observation
+finish_episode          -> final official success boolean
 ```
 
-Task reward and checker state are not returned by `start_episode` or
-`osc_step`. `finish_episode` exposes only final success and the number of
-accepted high-level actions.
+Task reward and checker state are not returned by `start_episode` or either
+action operation. `finish_episode` exposes only final success and the number
+of accepted high-level actions.
 
 The initial state is settled with zero arm and hold-gripper commands before
-observation 0. Each `osc_step` also has a short post-action settle window. Thus
-the observation is causally downstream of the action rather than a render of a
-requested target.
+observation 0. Each metric `osc_step` also has a short post-action settle
+window. A native `osc_sequence` performs exactly the submitted policy
+intervals without an added settle action. In both cases, the returned
+observation is causally downstream of the accepted action.
 
 ## Observation levels
 
@@ -263,7 +264,9 @@ socket via `LIBERO_CONTROL_SOCKET`. This is one persistent, auditable Codex
 session rather than an ephemeral invocation, but its CLI process exits after
 the Agent's final message instead of waiting at an interactive input box. Hook
 trust and Codex's inner sandbox prompts are bypassed because deployment
-containment is evaluator-controlled. The public client exposes only:
+containment is evaluator-controlled. The public client exposes `start`,
+`finish`, and exactly one action operation selected for the run. The default
+metric condition is:
 
 ```bash
 liberoctl start
@@ -271,8 +274,16 @@ liberoctl osc-step --position DX DY DZ --rotation RX RY RZ --gripper-delta-m DG
 liberoctl finish
 ```
 
-There is no `observe` or protocol `help` operation. `start` and `osc-step` return a
-small JSON receipt with the new observation ID, the relative
+The native A/B condition replaces `osc-step` with:
+
+```bash
+liberoctl osc-sequence --actions-file PATH
+```
+
+`PATH` is read by the client and only its JSON array is sent to the server; the
+server never receives or reads an Agent filesystem path. There is no `observe`
+operation. `start` and the selected action operation return a small JSON
+receipt with the new observation ID, the relative
 `benchmark_inputs/current_observation/observation.json` path, and safe execution
 metadata. RGB, masks, and NPY depth are never expanded into terminal output.
 
@@ -290,6 +301,16 @@ python scripts/launch_agent_episode.py \
   --suite libero_object \
   --task-id 0 \
   --profile level4
+```
+
+Select the native-action A/B condition with:
+
+```bash
+python scripts/launch_agent_episode.py \
+  --suite libero_object \
+  --task-id 0 \
+  --profile level4 \
+  --action-interface native_osc_sequence
 ```
 
 The launcher passes `HTTPS_PROXY=http://127.0.0.1:7890` to Codex by default.

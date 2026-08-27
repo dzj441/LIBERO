@@ -76,6 +76,11 @@ metric `liberoctl osc-step` interface. The latter accepts a Cartesian target
 delta and realizes it through the same LIBERO OSC_POSE controller. An Agent may
 inspect, transform, imitate, or ignore the source actions.
 
+In the mutually exclusive native-action A/B condition, each source action
+vector is directly compatible with one element of an `osc-sequence` JSON
+array. A submission may contain at most 20 such vectors; it produces one
+Agent-visible observation only after the complete sequence has executed.
+
 Only the episode-level outcome `verified successful demonstration` is public.
 Per-step checker values, first-success timing, reward, object ground-truth
 poses, raw segmentation IDs, and evaluator paths are absent. All public files

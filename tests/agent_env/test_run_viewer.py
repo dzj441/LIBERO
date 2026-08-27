@@ -8,6 +8,7 @@ import pytest
 from libero.libero.agent_env.run_viewer import (
     RunRepository,
     ViewerDataError,
+    _robot_command,
 )
 
 
@@ -30,6 +31,20 @@ def _event(timestamp: str, ordinal: int, item: dict) -> dict:
         "type": "event_msg",
         "payload": {"type": "item_completed", "item": item},
     }
+
+
+@pytest.mark.parametrize(
+    "shell_command, wire_command",
+    (
+        ("liberoctl step --position 0 0 0", "step"),
+        ("liberoctl osc-step --position 0 0 0", "osc_step"),
+        ("liberoctl osc-sequence --actions-file scratch/a.json", "osc_sequence"),
+    ),
+)
+def test_robot_command_normalizes_legacy_and_ab_interfaces(
+    shell_command, wire_command
+):
+    assert _robot_command(shell_command) == wire_command
 
 
 def _make_run(tmp_path: Path) -> tuple[RunRepository, Path, Path]:

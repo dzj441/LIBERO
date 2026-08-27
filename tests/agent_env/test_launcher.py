@@ -1,4 +1,12 @@
-from scripts.launch_agent_episode import build_codex_command, build_task_prompt
+import json
+from pathlib import Path
+
+from libero.libero.agent_env.control import ActionInterface
+from scripts.launch_agent_episode import (
+    _prepare_workspace,
+    build_codex_command,
+    build_task_prompt,
+)
 
 
 def test_prompt_is_nonstrategic_and_documents_delta_gripper_workflow():
@@ -32,6 +40,40 @@ def test_fixed_demo_prompt_only_adds_separate_episode_notice():
     assert "EEF poses are observations, not actions" in prompt
     assert "A commanded target is not guaranteed" not in prompt
     assert "imitate" not in prompt.lower()
+
+
+def test_native_sequence_prompt_documents_exact_bounded_micro_action_contract():
+    prompt = build_task_prompt(
+        "open the top drawer and put the bowl inside",
+        icl_condition="fixed_demo",
+        action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+    )
+    assert "liberoctl osc-sequence --actions-file PATH" in prompt
+    assert "1 to 20 normalized 7D OSC_POSE micro actions" in prompt
+    assert "[dx, dy, dz, rx, ry, rz, gripper]" in prompt
+    assert "within [-1, 1]" in prompt
+    assert "at most 50 accepted submissions" in prompt
+    assert "same component semantics" in prompt
+    assert "liberoctl osc-step" not in prompt
+
+
+def test_native_workspace_exposes_only_the_selected_wire_operation(tmp_path):
+    source_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _prepare_workspace(
+        source_root,
+        workspace,
+        "prompt",
+        "test-run",
+        icl_condition="none",
+        action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+    )
+    episode = json.loads((workspace / ".libero/episode.json").read_text())
+    assert episode["operations"] == ["start", "osc_sequence", "finish"]
+    assert episode["action_interface"] == "native_osc_sequence"
+    assert episode["max_native_osc_micro_steps_per_submission"] == 20
+    assert (workspace / "bin/liberoctl").stat().st_mode & 0o111
 
 
 def test_codex_command_is_persistent_one_shot_and_noninteractive():

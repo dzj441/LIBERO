@@ -673,6 +673,7 @@ class RunRepository:
             "task_instruction": task_instruction,
             "profile": manifest.get("profile"),
             "icl": manifest.get("icl_condition"),
+            "action_interface": manifest.get("action_interface"),
             "created_at": manifest.get("created_at"),
             "status": result.get("status") or "in_progress",
             "success": result.get("success"),

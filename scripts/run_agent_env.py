@@ -19,6 +19,7 @@ import numpy as np  # noqa: E402
 from libero.libero.agent_env import (  # noqa: E402
     make_libero_agent_env,
 )
+from libero.libero.agent_env.control import ActionInterface  # noqa: E402
 from libero.libero.agent_env.service import AgentEpisodeService  # noqa: E402
 
 
@@ -49,6 +50,7 @@ class AgentEnvBridge:
             agent_env,
             workspace_directory=Path.cwd(),
             current_observation_directory=args.observation_dir,
+            action_interface=args.action_interface,
         )
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -69,6 +71,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-gpu-device-id", type=int, default=-1)
     parser.add_argument("--initial-settle-control-steps", type=int, default=10)
     parser.add_argument("--max-agent-steps", type=int)
+    parser.add_argument(
+        "--action-interface",
+        choices=tuple(interface.value for interface in ActionInterface),
+        default=ActionInterface.METRIC_OSC_STEP.value,
+    )
     parser.add_argument(
         "--observation-dir",
         type=Path,

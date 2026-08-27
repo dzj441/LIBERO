@@ -19,6 +19,11 @@ import time
 from typing import Any, Mapping
 
 from libero.libero.benchmark import get_benchmark
+from libero.libero.agent_env.control import (
+    MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION,
+    MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS,
+    ActionInterface,
+)
 from libero.libero.agent_env.fixed_demo import project_fixed_demo_bundle
 
 
@@ -33,6 +38,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-gpu-device-id", type=int, default=0)
     parser.add_argument("--initial-settle-control-steps", type=int, default=10)
     parser.add_argument("--max-agent-steps", type=int, default=50)
+    parser.add_argument(
+        "--action-interface",
+        choices=tuple(interface.value for interface in ActionInterface),
+        default=ActionInterface.METRIC_OSC_STEP.value,
+        help="Mutually exclusive public robot-control condition",
+    )
     parser.add_argument("--run-id")
     parser.add_argument("--run-root", type=Path)
     parser.add_argument("--workspace-root", type=Path)
@@ -58,10 +69,19 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    action_interface = ActionInterface.parse(args.action_interface)
     if args.icl == "fixed_demo" and args.fixed_demo_master is None:
         raise ValueError("--icl fixed_demo requires --fixed-demo-master")
     if args.icl == "none" and args.fixed_demo_master is not None:
         raise ValueError("--fixed-demo-master is valid only with --icl fixed_demo")
+    if (
+        action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
+        and args.max_agent_steps > MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS
+    ):
+        raise ValueError(
+            "native_osc_sequence permits at most "
+            f"{MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} accepted submissions"
+        )
     source_root = Path(__file__).resolve().parents[1]
     canonical_root = _canonical_repository_root(source_root)
     run_root = (args.run_root or canonical_root / "agent_runs").resolve()
@@ -84,13 +104,18 @@ def main() -> int:
         raise
 
     task_instruction = _task_instruction(args.suite, args.task_id)
-    prompt = build_task_prompt(task_instruction, icl_condition=args.icl)
+    prompt = build_task_prompt(
+        task_instruction,
+        icl_condition=args.icl,
+        action_interface=action_interface,
+    )
     _prepare_workspace(
         source_root,
         workspace,
         prompt,
         run_id,
         icl_condition=args.icl,
+        action_interface=action_interface,
     )
     icl_projection_receipt = None
     if args.icl == "fixed_demo":
@@ -123,6 +148,12 @@ def main() -> int:
         "render_gpu_device_id": args.render_gpu_device_id,
         "initial_settle_control_steps": args.initial_settle_control_steps,
         "max_agent_steps": args.max_agent_steps,
+        "action_interface": action_interface.value,
+        "max_native_osc_micro_steps_per_submission": (
+            MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
+            if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
+            else None
+        ),
         "source_checkout": os.fspath(source_root),
         "source_commit": _git_value(source_root, "rev-parse", "HEAD"),
         "source_branch": _git_value(
@@ -160,6 +191,8 @@ def main() -> int:
         str(args.initial_settle_control_steps),
         "--max-agent-steps",
         str(args.max_agent_steps),
+        "--action-interface",
+        action_interface.value,
         "--workspace",
         os.fspath(workspace),
         "--socket",
@@ -200,6 +233,7 @@ def main() -> int:
             (os.fspath(workspace / "bin"), codex_environment.get("PATH", ""))
         )
         codex_environment["LIBERO_CONTROL_SOCKET"] = ".libero/control.sock"
+        codex_environment["LIBERO_ACTION_INTERFACE"] = action_interface.value
         codex_environment["HTTPS_PROXY"] = args.https_proxy
         codex_command = build_codex_command(
             codex_bin=args.codex_bin,
@@ -294,20 +328,54 @@ def main() -> int:
 
 
 def build_task_prompt(
-    task_instruction: str, *, icl_condition: str = "none"
+    task_instruction: str,
+    *,
+    icl_condition: str = "none",
+    action_interface: ActionInterface | str = ActionInterface.METRIC_OSC_STEP,
 ) -> str:
     instruction = " ".join(str(task_instruction).split())
+    action_interface = ActionInterface.parse(action_interface)
     if icl_condition not in {"none", "fixed_demo"}:
         raise ValueError(f"unsupported ICL condition: {icl_condition!r}")
     icl_notice = ""
     if icl_condition == "fixed_demo":
+        compatibility_notice = ""
+        if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE:
+            compatibility_notice = (
+                " Each source action vector has the same component semantics as "
+                "one `osc-sequence` micro action."
+            )
         icl_notice = (
             "\nA verified successful demonstration from a separate episode of "
             "the same task is available at `benchmark_inputs/expert_demo/`. "
             "The current scene configuration and object or goal poses may differ. "
             "The demonstration records the expert's native per-control-cycle "
             "OSC_POSE actions and measured EEF state observations. The measured "
-            "EEF poses are observations, not actions.\n"
+            "EEF poses are observations, not actions."
+            f"{compatibility_notice}\n"
+        )
+    if action_interface is ActionInterface.METRIC_OSC_STEP:
+        control_instruction = (
+            "2. Control the robot with `liberoctl osc-step --position DX DY DZ "
+            "--rotation RX RY RZ --gripper-delta-m DG`. Each command specifies "
+            "a metric Cartesian target delta executed through LIBERO's OSC_POSE "
+            "controller. Position deltas are robot-base-frame metres. Rotation "
+            "deltas are robot-base-frame rotation vectors in radians. DG is the "
+            "change in total jaw opening width in metres: positive opens, negative "
+            "closes, and zero preserves the current gripper target and grip force. "
+            "A target outside the physical gripper-width range is rejected."
+        )
+    else:
+        control_instruction = (
+            "2. Control the robot with `liberoctl osc-sequence --actions-file "
+            "PATH`. PATH must contain a JSON array of 1 to "
+            f"{MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION} normalized 7D OSC_POSE "
+            "micro actions in `[dx, dy, dz, rx, ry, rz, gripper]` order. Every "
+            "component must be within [-1, 1]. Each vector executes one LIBERO "
+            "policy interval; translation 1.0 corresponds to 0.05 m, rotation "
+            "1.0 to a 0.5 rad rotation-vector component, gripper -1 opens, and "
+            "+1 closes. One sequence submission counts as one Agent action, with "
+            f"at most {MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} accepted submissions."
         )
     return f"""{instruction}
 {icl_notice}
@@ -315,7 +383,7 @@ def build_task_prompt(
 A LIBERO episode has been prepared for you.
 
 1. Run `liberoctl start` exactly once to begin and receive the initial observation.
-2. Control the robot with `liberoctl osc-step --position DX DY DZ --rotation RX RY RZ --gripper-delta-m DG`. Each command specifies a metric Cartesian target delta executed through LIBERO's OSC_POSE controller. Position deltas are robot-base-frame metres. Rotation deltas are robot-base-frame rotation vectors in radians. DG is the change in total jaw opening width in metres: positive opens, negative closes, and zero preserves the current gripper target and grip force. A target outside the physical gripper-width range is rejected.
+{control_instruction}
 3. Wait for each step to complete, then inspect `benchmark_inputs/current_observation/observation.json` and any referenced files before issuing another step.
 4. When you have completed the task, run `liberoctl finish` exactly once. Only finish reports official task success.
 """
@@ -364,7 +432,9 @@ def _prepare_workspace(
     run_id: str,
     *,
     icl_condition: str,
+    action_interface: ActionInterface | str,
 ) -> None:
+    action_interface = ActionInterface.parse(action_interface)
     (workspace / ".libero").mkdir(mode=0o700)
     (workspace / "benchmark_inputs").mkdir()
     (workspace / "scratch").mkdir()
@@ -380,7 +450,17 @@ def _prepare_workspace(
             "schema_version": "libero.agent_workspace.v1",
             "run_id": run_id,
             "episode_resumable": False,
-            "operations": ["start", "osc_step", "finish"],
+            "operations": [
+                "start",
+                action_interface.wire_command,
+                "finish",
+            ],
+            "action_interface": action_interface.value,
+            "max_native_osc_micro_steps_per_submission": (
+                MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
+                if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
+                else None
+            ),
             "observation_retention": "current_only",
             "icl_condition": icl_condition,
             "expert_demo": (

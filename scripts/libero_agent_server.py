@@ -20,6 +20,7 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
 from libero.libero.agent_env import make_libero_agent_env  # noqa: E402
+from libero.libero.agent_env.control import ActionInterface  # noqa: E402
 from libero.libero.agent_env.private_recording import (  # noqa: E402
     PrivateRolloutVideoRecorder,
 )
@@ -84,6 +85,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-gpu-device-id", type=int, default=0)
     parser.add_argument("--initial-settle-control-steps", type=int, default=10)
     parser.add_argument("--max-agent-steps", type=int)
+    parser.add_argument(
+        "--action-interface",
+        choices=tuple(interface.value for interface in ActionInterface),
+        default=ActionInterface.METRIC_OSC_STEP.value,
+    )
     parser.add_argument("--workspace", type=Path, required=True)
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--run-directory", type=Path, required=True)
@@ -127,6 +133,7 @@ def main() -> int:
             workspace / "benchmark_inputs" / "current_observation"
         ),
         private_run_directory=run_directory,
+        action_interface=args.action_interface,
     )
     server: EpisodeUnixServer | None = None
     interrupted_reason = "server_stopped_before_finish"

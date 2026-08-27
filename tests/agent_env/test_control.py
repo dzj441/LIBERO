@@ -2,8 +2,10 @@ import numpy as np
 import pytest
 
 from libero.libero.agent_env.control import (
+    MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION,
     EEFCommand,
     EEFExecution,
+    NativeOSCSequenceExecutor,
     OSCControlConfig,
     _gripper_internal_target_width_m,
     _set_gripper_internal_target_width_m,
@@ -12,6 +14,7 @@ from libero.libero.agent_env.control import (
     matrix_to_rotation_vector,
     normalized_osc_action,
     rotation_vector_to_matrix,
+    validate_native_osc_sequence,
 )
 
 
@@ -98,6 +101,60 @@ def test_internal_adapter_rejects_accidental_oversized_native_action():
         normalized_osc_action(
             [0.051, 0.0, 0.0], [0.0, 0.0, 0.0], 0.0, OSCControlConfig()
         )
+
+
+@pytest.mark.parametrize(
+    "actions, message",
+    (
+        ([], "between 1 and 20"),
+        ([[0.0] * 7] * 21, "between 1 and 20"),
+        ([[0.0] * 6], r"shape \[N, 7\]"),
+        ([[0.0, 0.0, 0.0, 0.0, 0.0, np.nan, 0.0]], "finite"),
+        ([[0.0, 0.0, 0.0, 0.0, 0.0, 1.01, 0.0]], r"within \[-1, 1\]"),
+    ),
+)
+def test_native_osc_sequence_validation_rejects_invalid_batches(actions, message):
+    with pytest.raises(ValueError, match=message):
+        validate_native_osc_sequence(actions)
+
+
+class _FakeNativeEnv:
+    def __init__(self):
+        self.actions = []
+
+    def step(self, action):
+        self.actions.append(np.asarray(action).copy())
+        return {"native_index": len(self.actions)}, 0.0, False, {}
+
+
+def test_native_osc_sequence_executes_exactly_one_policy_interval_per_vector():
+    env = _FakeNativeEnv()
+    observed = []
+    executor = NativeOSCSequenceExecutor(env, observed.append)
+    actions = np.zeros((MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION, 7))
+    actions[:, 0] = np.linspace(-1.0, 1.0, len(actions))
+    actions[:, -1] = 1.0
+
+    final_observation, execution = executor.execute(actions)
+
+    assert final_observation == {"native_index": len(actions)}
+    assert len(env.actions) == len(actions)
+    assert len(observed) == len(actions)
+    np.testing.assert_allclose(np.asarray(env.actions), actions)
+    assert execution.to_public_dict() == {
+        "command_completed": True,
+        "termination_reason": "sequence_executed",
+        "micro_step_count": len(actions),
+        "control_steps": len(actions),
+    }
+
+
+def test_invalid_native_sequence_does_not_advance_physics():
+    env = _FakeNativeEnv()
+    executor = NativeOSCSequenceExecutor(env)
+    with pytest.raises(ValueError, match="within"):
+        executor.execute([[0.0, 0.0, 0.0, 0.0, 0.0, 2.0, 0.0]])
+    assert env.actions == []
 
 
 def test_limit_vector_norm_preserves_direction():

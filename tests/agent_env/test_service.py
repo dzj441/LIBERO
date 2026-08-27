@@ -1,5 +1,6 @@
 import json
 
+from libero.libero.agent_env.control import ActionInterface
 from libero.libero.agent_env.profiles import project_public_observation
 from libero.libero.agent_env.service import AgentEpisodeService
 from test_profiles import _master
@@ -24,6 +25,21 @@ class _FakeAgentEnv:
         return {
             "accepted_agent_step": 1,
             "execution": {"command_completed": True},
+            "observation": project_public_observation(
+                _master(frame_index=1), "level2"
+            ),
+        }
+
+    def step_osc_sequence(self, **arguments):
+        assert arguments == {
+            "actions": [[0.1, 0.0, 0.0, 0.0, 0.2, 0.0, 1.0]],
+        }
+        return {
+            "accepted_agent_step": 1,
+            "execution": {
+                "command_completed": True,
+                "micro_step_count": 1,
+            },
             "observation": project_public_observation(
                 _master(frame_index=1), "level2"
             ),
@@ -95,6 +111,36 @@ def test_service_rejects_legacy_step_command(tmp_path):
         assert "osc_step" in str(exc)
     else:
         raise AssertionError("legacy step command should be rejected")
+
+
+def test_native_sequence_service_exposes_only_selected_action_interface(tmp_path):
+    workspace = tmp_path / "workspace"
+    service = AgentEpisodeService(
+        _FakeAgentEnv(),
+        workspace_directory=workspace,
+        current_observation_directory=(
+            workspace / "benchmark_inputs" / "current_observation"
+        ),
+        action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+    )
+
+    service.handle({"command": "start"})
+    try:
+        service.handle({"command": "osc_step"})
+    except ValueError as exc:
+        assert "osc_sequence" in str(exc)
+        assert "osc_step" not in str(exc)
+    else:
+        raise AssertionError("inactive metric interface should be rejected")
+
+    stepped = service.handle(
+        {
+            "command": "osc_sequence",
+            "actions": [[0.1, 0.0, 0.0, 0.0, 0.2, 0.0, 1.0]],
+        }
+    )
+    assert stepped["observation_id"] == "obs_000001"
+    assert stepped["execution"]["micro_step_count"] == 1
 
 
 def test_service_marks_unfinished_episode_aborted(tmp_path):
