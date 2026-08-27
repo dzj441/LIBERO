@@ -95,6 +95,32 @@ def control_socket_path() -> Path:
     return workspace / ".libero" / "control.sock"
 
 
+def current_observation_file() -> Path:
+    workspace = Path(__file__).resolve().parent.parent
+    return workspace / "benchmark_inputs" / "current_observation" / "observation.json"
+
+
+def bind_current_observation_id(
+    request: dict[str, Any], observation_file: str | Path | None = None
+) -> dict[str, Any]:
+    """Bind a state-changing request to the current public observation."""
+
+    if request.get("command") == "start":
+        return dict(request)
+    path = (
+        Path(observation_file)
+        if observation_file is not None
+        else current_observation_file()
+    )
+    value = json.loads(path.read_text(encoding="utf-8"))
+    observation_id = value.get("observation_id") if isinstance(value, dict) else None
+    if not isinstance(observation_id, str) or not observation_id:
+        raise ValueError("current observation has no valid observation_id")
+    bound = dict(request)
+    bound["observation_id"] = observation_id
+    return bound
+
+
 def send_request(socket_path: str | Path, request: dict[str, Any]) -> dict[str, Any]:
     encoded = (json.dumps(request, separators=(",", ":")) + "\n").encode("utf-8")
     chunks: list[bytes] = []
@@ -132,7 +158,8 @@ def send_request(socket_path: str | Path, request: dict[str, Any]) -> dict[str, 
 
 def main() -> int:
     try:
-        response = send_request(control_socket_path(), request_for_args(parse_args()))
+        request = bind_current_observation_id(request_for_args(parse_args()))
+        response = send_request(control_socket_path(), request)
     except (OSError, RuntimeError, ValueError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2), file=sys.stderr)
         return 2

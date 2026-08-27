@@ -78,6 +78,7 @@ def test_service_exposes_only_three_operations_and_current_observation(tmp_path)
     stepped = service.handle(
         {
             "command": "osc_step",
+            "observation_id": "obs_000000",
             "delta_position_m": [0.01, 0.0, 0.0],
             "delta_rotation_rotvec_rad": [0.0, 0.0, 0.1],
             "delta_gripper_width_m": -0.005,
@@ -88,7 +89,9 @@ def test_service_exposes_only_three_operations_and_current_observation(tmp_path)
     assert (run_directory / "private_observations" / "obs_000000").is_dir()
     assert (run_directory / "private_observations" / "obs_000001").is_dir()
 
-    finished = service.handle({"command": "finish"})
+    finished = service.handle(
+        {"command": "finish", "observation_id": "obs_000001"}
+    )
     assert finished["success"] is True
     assert json.loads((run_directory / "result.json").read_text())["status"] == "finished"
     assert len((run_directory / "actions.jsonl").read_text().splitlines()) == 3
@@ -136,11 +139,38 @@ def test_native_sequence_service_exposes_only_selected_action_interface(tmp_path
     stepped = service.handle(
         {
             "command": "osc_sequence",
+            "observation_id": "obs_000000",
             "actions": [[0.1, 0.0, 0.0, 0.0, 0.2, 0.0, 1.0]],
         }
     )
     assert stepped["observation_id"] == "obs_000001"
     assert stepped["execution"]["micro_step_count"] == 1
+
+
+def test_service_rejects_missing_or_stale_observation_without_acting(tmp_path):
+    workspace = tmp_path / "workspace"
+    service = AgentEpisodeService(
+        _FakeAgentEnv(),
+        workspace_directory=workspace,
+        current_observation_directory=(
+            workspace / "benchmark_inputs" / "current_observation"
+        ),
+    )
+    service.handle({"command": "start"})
+
+    for request in (
+        {"command": "osc_step"},
+        {"command": "osc_step", "observation_id": "obs_stale"},
+    ):
+        try:
+            service.handle(request)
+        except ValueError as exc:
+            assert "observation_id" in str(exc)
+        else:
+            raise AssertionError("unbound action should be rejected")
+
+    assert service.latest_observation_id == "obs_000000"
+    assert service.agent_env.closed is False
 
 
 def test_service_marks_unfinished_episode_aborted(tmp_path):

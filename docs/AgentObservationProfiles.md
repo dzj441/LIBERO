@@ -241,6 +241,7 @@ LIBERO/agent_runs/<run_id>/                 evaluator-private
   continuous_video.mp4
   result.json
   run_manifest.json
+  server_ready.json                         verified before Codex starts
   codex_session.jsonl                       when a matching session is found
 
 agent_workspaces/libero/<run_id>/           persistent Codex cwd
@@ -287,6 +288,16 @@ receipt with the new observation ID, the relative
 `benchmark_inputs/current_observation/observation.json` path, and safe execution
 metadata. RGB, masks, and NPY depth are never expanded into terminal output.
 
+Every `liberoctl` call is synchronous. The client blocks on the Unix socket
+while the simulator executes, renders, and atomically publishes the complete
+next observation. Only then does the server return the receipt and let the
+shell command finish; that command completion is the Agent's ready
+notification. No separate sleep, file polling, or asynchronous notification is
+required. The client also reads the current public `observation_id` and binds it
+to every action and `finish` request. The server rejects missing or stale IDs
+before advancing the simulation, preventing overlapping commands from silently
+acting on a newer frame.
+
 The current directory is replaced from a fully written staging tree after
 every observation. Level 2 annotations therefore disappear physically after
 observation 0, and the agent receives no automatic online history. It may use
@@ -320,6 +331,14 @@ simulation server uses EGL exclusively. It detects the installed NVIDIA kernel
 driver and prepends the matching
 `LIBERO/runtime/nvidia/<version>/runtime-libs-full` stack, together with its EGL
 vendor manifest; it does not fall back to OSMesa.
+
+Before launching Codex, the launcher requires both the socket and an
+evaluator-private `server_ready.json`. It verifies the task, init-state index,
+profile, seed, resolution, timing, action interface, and action budget against
+the requested run. The private run manifest records SHA-256 fingerprints for
+the exact prompt, workspace operation contract, optional ICL manifest, expected
+and actual ready contracts, source status, and the combined run configuration.
+These audit artifacts are not copied into the Agent workspace.
 
 ### Prompt boundary
 

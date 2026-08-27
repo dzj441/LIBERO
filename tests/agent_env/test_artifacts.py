@@ -1,6 +1,7 @@
 import json
 
 import numpy as np
+import pytest
 
 from libero.libero.agent_env.artifacts import (
     replace_current_public_observation,
@@ -48,3 +49,64 @@ def test_current_only_replacement_removes_stale_modalities(tmp_path):
     assert not (current / "annotations").exists()
     assert not (current / "head" / "depth_m.npy").exists()
     assert (current / "head" / "rgb.png").is_file()
+
+
+@pytest.mark.parametrize("profile_number", (1, 2, 3, 4))
+@pytest.mark.parametrize("frame_index", (0, 1))
+def test_materialized_profile_matrix_has_exact_file_surface(
+    tmp_path, profile_number, frame_index
+):
+    profile = f"level{profile_number}"
+    root = tmp_path / f"{profile}-frame-{frame_index}"
+    public = project_public_observation(_master(frame_index=frame_index), profile)
+    write_public_observation(public, root)
+
+    actual_files = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+    expected_files = {
+        "observation.json",
+        "head/rgb.png",
+        "wrist/rgb.png",
+    }
+    if profile_number >= 4:
+        for camera in ("head", "wrist"):
+            expected_files.update(
+                {
+                    f"{camera}/depth_m.npy",
+                    f"{camera}/depth_valid_mask.png",
+                    f"{camera}/depth_visualization.png",
+                }
+            )
+    if profile_number >= 2 and frame_index == 0:
+        for camera in ("head", "wrist"):
+            expected_files.update(
+                {
+                    f"annotations/{camera}/manipulated_object_mask.png",
+                    f"annotations/{camera}/goal_fixture_mask.png",
+                    f"annotations/{camera}/annotations_overlay.png",
+                }
+            )
+    assert actual_files == expected_files
+
+    metadata = json.loads((root / "observation.json").read_text())
+    assert ("proprioception" in metadata) is (profile_number >= 3)
+    assert ("annotations" in metadata) is (
+        profile_number >= 2 and frame_index == 0
+    )
+    for camera in ("head", "wrist"):
+        assert ("depth" in metadata["cameras"][camera]) is (profile_number >= 4)
+
+    rendered = (root / "observation.json").read_text()
+    for forbidden in (
+        "private",
+        "reward",
+        "checker",
+        "actor_pose",
+        "contact_points",
+        "instance_id",
+        "raw_segmentation",
+    ):
+        assert forbidden not in rendered

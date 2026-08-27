@@ -2,6 +2,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import pytest
+
 from libero.libero.agent_env.artifacts import write_public_observation
 from libero.libero.agent_env.fixed_demo import (
     P4_MASTER_SCHEMA_VERSION,
@@ -138,24 +140,57 @@ def test_project_level4_bundle_keeps_actions_and_drops_private_provenance(tmp_pa
     assert "first_success_step" not in rendered
 
 
-def test_file_level_projection_removes_unavailable_modalities(tmp_path):
+@pytest.mark.parametrize("profile_number", (1, 2, 3, 4))
+def test_file_level_projection_matches_every_profile_allowlist(
+    tmp_path, profile_number
+):
     master = _test_master(tmp_path / "master")
     bundle = tmp_path / "bundle"
+    profile = f"level{profile_number}"
     project_fixed_demo_bundle(
         master_root=master,
         destination=bundle,
-        profile="level1",
+        profile=profile,
         expected_task_instruction=(
             "pick up the alphabet soup and place it in the basket"
         ),
     )
-    observation = json.loads(
+    validate_fixed_demo_bundle(
+        bundle,
+        expected_profile=profile,
+        expected_task_instruction=(
+            "pick up the alphabet soup and place it in the basket"
+        ),
+    )
+    initial = json.loads(
         (bundle / "frames/frame_000000/observation.json").read_text()
     )
-    assert "proprioception" not in observation
-    assert "annotations" not in observation
-    assert "depth" not in observation["cameras"]["head"]
-    assert not (bundle / "frames/frame_000000/head/depth_m.npy").exists()
+    subsequent = json.loads(
+        (bundle / "frames/frame_000001/observation.json").read_text()
+    )
+    assert ("proprioception" in initial) is (profile_number >= 3)
+    assert ("annotations" in initial) is (profile_number >= 2)
+    assert "annotations" not in subsequent
+    for camera in ("head", "wrist"):
+        assert ("depth" in initial["cameras"][camera]) is (profile_number >= 4)
+        assert (
+            bundle / "frames" / "frame_000000" / camera / "depth_m.npy"
+        ).exists() is (profile_number >= 4)
+
+    rendered = "\n".join(
+        path.read_text(errors="ignore") for path in bundle.rglob("*.json*")
+    )
+    for forbidden in (
+        "/private/source",
+        "dataset_path",
+        "bddl_file",
+        "mujoco_state",
+        "raw_segmentation",
+        "object_ground_truth_pose",
+        "first_success_step",
+        "checker",
+    ):
+        assert forbidden not in rendered
 
 
 def test_contact_sheet_sampling_is_deterministic_and_keeps_endpoints():

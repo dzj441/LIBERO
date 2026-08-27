@@ -11,8 +11,9 @@ from pathlib import Path
 import signal
 import socketserver
 import sys
+import tempfile
 import traceback
-from typing import Any
+from typing import Any, Mapping
 
 # The launcher sets the matching NVIDIA userspace stack before this process is
 # created.  These defaults prevent accidental OSMesa fallback when run directly.
@@ -23,6 +24,9 @@ from libero.libero.agent_env import make_libero_agent_env  # noqa: E402
 from libero.libero.agent_env.control import ActionInterface  # noqa: E402
 from libero.libero.agent_env.private_recording import (  # noqa: E402
     PrivateRolloutVideoRecorder,
+)
+from libero.libero.agent_env.runtime_contract import (  # noqa: E402
+    build_server_ready_contract,
 )
 from libero.libero.agent_env.service import AgentEpisodeService  # noqa: E402
 
@@ -135,6 +139,19 @@ def main() -> int:
         private_run_directory=run_directory,
         action_interface=args.action_interface,
     )
+    ready_contract = build_server_ready_contract(
+        suite=args.suite,
+        task_id=args.task_id,
+        init_state_id=args.init_state_id,
+        task_instruction=agent_env.task_instruction,
+        profile=agent_env.profile,
+        seed=args.seed,
+        resolution=args.resolution,
+        render_gpu_device_id=args.render_gpu_device_id,
+        initial_settle_control_steps=agent_env.initial_settle_control_steps,
+        max_agent_steps=agent_env.max_agent_steps,
+        action_interface=service.action_interface,
+    )
     server: EpisodeUnixServer | None = None
     interrupted_reason = "server_stopped_before_finish"
     try:
@@ -158,6 +175,7 @@ def main() -> int:
 
         signal.signal(signal.SIGTERM, request_stop)
         signal.signal(signal.SIGINT, request_stop)
+        _write_json_atomic(run_directory / "server_ready.json", ready_contract)
         LOGGER.info("ready protocol=libero.agent_unix_socket.v1 socket=%s", socket_path)
         while not server.stop_requested:
             if os.getppid() != args.launcher_pid:
@@ -175,6 +193,24 @@ def main() -> int:
             socket_path.unlink()
         service.close()
         recorder.close()
+
+
+def _write_json_atomic(path: Path, value: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as stream:
+            json.dump(dict(value), stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()
 
 
 if __name__ == "__main__":

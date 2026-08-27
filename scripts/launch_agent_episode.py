@@ -24,7 +24,13 @@ from libero.libero.agent_env.control import (
     MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS,
     ActionInterface,
 )
-from libero.libero.agent_env.fixed_demo import project_fixed_demo_bundle
+from libero.libero.agent_env.fixed_demo import file_sha256, project_fixed_demo_bundle
+from libero.libero.agent_env.runtime_contract import (
+    build_server_ready_contract,
+    canonical_json_sha256,
+    sha256_text,
+    validate_server_ready_contract,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -130,17 +136,36 @@ def main() -> int:
             icl_projection_receipt,
         )
     socket_path = workspace / ".libero" / "control.sock"
+    server_ready_path = run_directory / "server_ready.json"
     server_environment, driver_version = _server_environment(
         source_root, nvidia_runtime_root
     )
-    manifest = {
-        "schema_version": "libero.agent_run_manifest.v1",
-        "run_id": run_id,
-        "created_at": _utc_now(),
+    source_commit = _git_value(source_root, "rev-parse", "HEAD")
+    source_status = _git_value(
+        source_root,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        required=False,
+    ) or ""
+    expected_server_ready = build_server_ready_contract(
+        suite=args.suite,
+        task_id=args.task_id,
+        init_state_id=args.init_state_id,
+        task_instruction=task_instruction,
+        profile=args.profile,
+        seed=args.seed,
+        resolution=args.resolution,
+        render_gpu_device_id=args.render_gpu_device_id,
+        initial_settle_control_steps=args.initial_settle_control_steps,
+        max_agent_steps=args.max_agent_steps,
+        action_interface=action_interface,
+    )
+    run_configuration = {
         "suite": args.suite,
         "task_id": args.task_id,
         "init_state_id": args.init_state_id,
-        "profile": args.profile,
+        "profile": expected_server_ready["observation_profile"],
         "icl_condition": args.icl,
         "fixed_demo_available": args.icl == "fixed_demo",
         "seed": args.seed,
@@ -149,16 +174,47 @@ def main() -> int:
         "initial_settle_control_steps": args.initial_settle_control_steps,
         "max_agent_steps": args.max_agent_steps,
         "action_interface": action_interface.value,
+        "codex_binary": args.codex_bin,
+        "codex_model_requested": args.codex_model,
+        "codex_effort_requested": args.codex_effort,
         "max_native_osc_micro_steps_per_submission": (
             MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
             if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
             else None
         ),
+    }
+    prompt_sha256 = file_sha256(workspace / "TASK_PROMPT.txt")
+    workspace_contract_sha256 = file_sha256(workspace / ".libero" / "episode.json")
+    fixed_demo_manifest_sha256 = (
+        None
+        if args.icl == "none"
+        else file_sha256(
+            workspace / "benchmark_inputs" / "expert_demo" / "manifest.json"
+        )
+    )
+    configuration_fingerprint = {
+        **run_configuration,
+        "source_commit": source_commit,
+        "render_backend": "egl",
+        "nvidia_userspace_driver": driver_version,
+        "operator_prompt_sha256": prompt_sha256,
+        "workspace_contract_sha256": workspace_contract_sha256,
+        "fixed_demo_manifest_sha256": fixed_demo_manifest_sha256,
+        "server_ready_contract_sha256": canonical_json_sha256(
+            expected_server_ready
+        ),
+    }
+    manifest = {
+        "schema_version": "libero.agent_run_manifest.v1",
+        "run_id": run_id,
+        "created_at": _utc_now(),
+        **run_configuration,
         "source_checkout": os.fspath(source_root),
-        "source_commit": _git_value(source_root, "rev-parse", "HEAD"),
+        "source_commit": source_commit,
         "source_branch": _git_value(
             source_root, "branch", "--show-current", required=False
         ),
+        "source_worktree_dirty": bool(source_status),
         "workspace": os.fspath(workspace),
         "episode_resumable": False,
         "codex_execution_mode": "exec",
@@ -166,6 +222,20 @@ def main() -> int:
         "observation_retention": "current_only",
         "render_backend": "egl",
         "nvidia_userspace_driver": driver_version,
+        "server_ready_verified": False,
+        "integrity": {
+            "algorithm": "sha256",
+            "configuration_sha256": canonical_json_sha256(
+                configuration_fingerprint
+            ),
+            "operator_prompt_sha256": prompt_sha256,
+            "workspace_contract_sha256": workspace_contract_sha256,
+            "fixed_demo_manifest_sha256": fixed_demo_manifest_sha256,
+            "expected_server_ready_contract_sha256": canonical_json_sha256(
+                expected_server_ready
+            ),
+            "source_worktree_status_sha256": sha256_text(source_status),
+        },
     }
     _write_json_atomic(run_directory / "run_manifest.json", manifest)
 
@@ -221,12 +291,19 @@ def main() -> int:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
-        _wait_for_socket(
+        actual_server_ready = _wait_for_server_ready(
             socket_path,
+            server_ready_path,
             server_process,
+            expected_contract=expected_server_ready,
             timeout_s=args.server_ready_timeout_s,
             server_log_path=server_log_path,
         )
+        manifest["server_ready_verified"] = True
+        manifest["integrity"]["actual_server_ready_contract_sha256"] = (
+            canonical_json_sha256(actual_server_ready)
+        )
+        _write_json_atomic(run_directory / "run_manifest.json", manifest)
 
         codex_environment = os.environ.copy()
         codex_environment["PATH"] = os.pathsep.join(
@@ -521,13 +598,15 @@ def _canonical_repository_root(source_root: Path) -> Path:
     return common_git.parent if common_git.name == ".git" else source_root
 
 
-def _wait_for_socket(
+def _wait_for_server_ready(
     socket_path: Path,
+    ready_path: Path,
     process: subprocess.Popen[Any],
     *,
+    expected_contract: Mapping[str, Any],
     timeout_s: float,
     server_log_path: Path,
-) -> None:
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         return_code = process.poll()
@@ -537,12 +616,18 @@ def _wait_for_socket(
                 f"see {server_log_path}"
             )
         try:
-            if stat.S_ISSOCK(socket_path.stat().st_mode):
-                return
+            socket_ready = stat.S_ISSOCK(socket_path.stat().st_mode)
         except FileNotFoundError:
-            pass
+            socket_ready = False
+        if socket_ready and ready_path.is_file():
+            actual = _read_json(ready_path)
+            validate_server_ready_contract(actual, expected_contract)
+            return actual
         time.sleep(0.2)
-    raise TimeoutError(f"LIBERO server did not become ready within {timeout_s}s")
+    raise TimeoutError(
+        "LIBERO server did not publish a verified ready contract within "
+        f"{timeout_s}s"
+    )
 
 
 def _new_run_id() -> str:

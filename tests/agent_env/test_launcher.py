@@ -74,6 +74,9 @@ def test_native_workspace_exposes_only_the_selected_wire_operation(tmp_path):
     assert episode["action_interface"] == "native_osc_sequence"
     assert episode["max_native_osc_micro_steps_per_submission"] == 20
     assert (workspace / "bin/liberoctl").stat().st_mode & 0o111
+    assert "seed" not in episode
+    assert "server_ready" not in episode
+    assert not (workspace / "run_manifest.json").exists()
 
 
 def test_codex_command_is_persistent_one_shot_and_noninteractive():

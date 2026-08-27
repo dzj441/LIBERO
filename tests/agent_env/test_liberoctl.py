@@ -5,6 +5,7 @@ import pytest
 from scripts.liberoctl import (
     METRIC_OSC_STEP,
     NATIVE_OSC_SEQUENCE,
+    bind_current_observation_id,
     parse_args,
     request_for_args,
 )
@@ -56,4 +57,28 @@ def test_native_client_reads_actions_locally_and_exposes_only_sequence(tmp_path)
         parse_args(
             ["osc-step", "--position", "0", "0", "0"],
             action_interface=NATIVE_OSC_SEQUENCE,
+        )
+
+
+def test_client_automatically_binds_nonstart_requests_to_current_observation(tmp_path):
+    observation = tmp_path / "observation.json"
+    observation.write_text(
+        json.dumps({"observation_id": "obs_000123"}), encoding="utf-8"
+    )
+
+    bound = bind_current_observation_id(
+        {"command": "finish"}, observation_file=observation
+    )
+    assert bound == {"command": "finish", "observation_id": "obs_000123"}
+    assert bind_current_observation_id(
+        {"command": "start"}, observation_file=tmp_path / "missing.json"
+    ) == {"command": "start"}
+
+
+def test_client_rejects_a_current_observation_without_an_id(tmp_path):
+    observation = tmp_path / "observation.json"
+    observation.write_text("{}", encoding="utf-8")
+    with pytest.raises(ValueError, match="observation_id"):
+        bind_current_observation_id(
+            {"command": "osc_step"}, observation_file=observation
         )

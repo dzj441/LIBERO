@@ -42,6 +42,7 @@ class AgentEpisodeService:
             else Path(private_run_directory).resolve()
         )
         self.state = "ready"
+        self.latest_observation_id: str | None = None
         self._event_index = 0
         if self.private_run_directory is not None:
             self.private_run_directory.mkdir(parents=True, exist_ok=True)
@@ -68,7 +69,7 @@ class AgentEpisodeService:
         ):
             response = self._osc_sequence(request)
         elif command == "finish":
-            response = self._finish()
+            response = self._finish(request)
         else:
             raise ValueError(
                 "unknown command; expected start, "
@@ -120,6 +121,7 @@ class AgentEpisodeService:
     def _osc_step(self, request: Mapping[str, Any]) -> dict[str, Any]:
         if self.state != "active":
             raise RuntimeError("osc_step requires one active episode")
+        self._require_latest_observation(request)
         result = self.agent_env.step_osc_target(
             delta_position_m=request.get("delta_position_m", (0.0, 0.0, 0.0)),
             delta_rotation_rotvec_rad=request.get(
@@ -139,6 +141,7 @@ class AgentEpisodeService:
     def _osc_sequence(self, request: Mapping[str, Any]) -> dict[str, Any]:
         if self.state != "active":
             raise RuntimeError("osc_sequence requires one active episode")
+        self._require_latest_observation(request)
         result = self.agent_env.step_osc_sequence(actions=request.get("actions", ()))
         observation = result["observation"]
         observation_file = self._publish(observation)
@@ -149,9 +152,10 @@ class AgentEpisodeService:
             "execution": result["execution"],
         }
 
-    def _finish(self) -> dict[str, Any]:
+    def _finish(self, request: Mapping[str, Any]) -> dict[str, Any]:
         if self.state != "active":
             raise RuntimeError("finish requires one active episode")
+        self._require_latest_observation(request)
         result = self.agent_env.finish_episode()
         self.state = "finished"
         response = {
@@ -188,7 +192,18 @@ class AgentEpisodeService:
             if destination.exists():
                 raise RuntimeError(f"duplicate observation id: {observation_id}")
             shutil.copytree(self.current_observation_directory, destination)
+        self.latest_observation_id = str(observation["observation_id"])
         return relative_path.as_posix()
+
+    def _require_latest_observation(self, request: Mapping[str, Any]) -> None:
+        requested = request.get("observation_id")
+        if not isinstance(requested, str) or not requested:
+            raise ValueError("observation_id must identify the latest observation")
+        if requested != self.latest_observation_id:
+            raise ValueError(
+                "observation_id is stale; latest observation is "
+                f"{self.latest_observation_id!r}"
+            )
 
     def _record_event(self, request: object, response: Mapping[str, Any]) -> None:
         if self.private_run_directory is None:

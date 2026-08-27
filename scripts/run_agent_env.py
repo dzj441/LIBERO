@@ -93,6 +93,14 @@ def main() -> None:
                 "event": "ready",
                 "protocol": "libero.agent_env.jsonl.v1",
                 "next": {"command": "start"},
+                "subsequent_request_binding": {
+                    "field": "observation_id",
+                    "value": "latest_successful_response",
+                    "required_for": [
+                        bridge.service.action_interface.wire_command,
+                        "finish",
+                    ],
+                },
             }
         )
         for line in sys.stdin:
