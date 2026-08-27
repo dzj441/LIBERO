@@ -9,7 +9,9 @@ def test_prompt_is_nonstrategic_and_documents_delta_gripper_workflow():
         "pick up the alphabet soup and place it in the basket"
     )
     assert "liberoctl start" in prompt
-    assert "liberoctl step" in prompt
+    assert "liberoctl osc-step" in prompt
+    assert "metric Cartesian target delta" in prompt
+    assert "OSC_POSE controller" in prompt
     assert "--gripper-delta-m DG" in prompt
     assert "positive opens, negative closes" in prompt
     assert "liberoctl finish" in prompt
@@ -25,6 +27,10 @@ def test_fixed_demo_prompt_only_adds_separate_episode_notice():
     assert "benchmark_inputs/expert_demo/" in prompt
     assert "separate episode of the same task" in prompt
     assert "object or goal poses may differ" in prompt
+    assert "native per-control-cycle OSC_POSE actions" in prompt
+    assert "measured EEF state observations" in prompt
+    assert "EEF poses are observations, not actions" in prompt
+    assert "A commanded target is not guaranteed" not in prompt
     assert "imitate" not in prompt.lower()
 
 

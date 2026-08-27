@@ -19,7 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="liberoctl")
     subparsers = parser.add_subparsers(dest="operation", required=True)
     subparsers.add_parser("start")
-    step = subparsers.add_parser("step")
+    step = subparsers.add_parser("osc-step")
     step.add_argument(
         "--position",
         type=float,
@@ -45,7 +45,7 @@ def request_for_args(args: argparse.Namespace) -> dict[str, Any]:
     if args.operation == "finish":
         return {"command": "finish"}
     return {
-        "command": "step",
+        "command": "osc_step",
         "delta_position_m": list(args.position),
         "delta_rotation_rotvec_rad": list(args.rotation),
         "delta_gripper_width_m": args.gripper_delta_m,

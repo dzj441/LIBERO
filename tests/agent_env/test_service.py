@@ -15,7 +15,7 @@ class _FakeAgentEnv:
             "observation": project_public_observation(_master(), "level2"),
         }
 
-    def step_eef(self, **arguments):
+    def step_osc_target(self, **arguments):
         assert arguments == {
             "delta_position_m": [0.01, 0.0, 0.0],
             "delta_rotation_rotvec_rad": [0.0, 0.0, 0.1],
@@ -61,7 +61,7 @@ def test_service_exposes_only_three_operations_and_current_observation(tmp_path)
 
     stepped = service.handle(
         {
-            "command": "step",
+            "command": "osc_step",
             "delta_position_m": [0.01, 0.0, 0.0],
             "delta_rotation_rotvec_rad": [0.0, 0.0, 0.1],
             "delta_gripper_width_m": -0.005,
@@ -76,6 +76,25 @@ def test_service_exposes_only_three_operations_and_current_observation(tmp_path)
     assert finished["success"] is True
     assert json.loads((run_directory / "result.json").read_text())["status"] == "finished"
     assert len((run_directory / "actions.jsonl").read_text().splitlines()) == 3
+
+
+def test_service_rejects_legacy_step_command(tmp_path):
+    workspace = tmp_path / "workspace"
+    service = AgentEpisodeService(
+        _FakeAgentEnv(),
+        workspace_directory=workspace,
+        current_observation_directory=(
+            workspace / "benchmark_inputs" / "current_observation"
+        ),
+    )
+
+    service.handle({"command": "start"})
+    try:
+        service.handle({"command": "step"})
+    except ValueError as exc:
+        assert "osc_step" in str(exc)
+    else:
+        raise AssertionError("legacy step command should be rejected")
 
 
 def test_service_marks_unfinished_episode_aborted(tmp_path):

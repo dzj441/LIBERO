@@ -12,10 +12,10 @@ from .profiles import ObservationProfile, project_public_observation
 
 
 class LiberoAgentEnv:
-    """Expose start_episode / step_eef / finish_episode without private state.
+    """Expose start_episode / step_osc_target / finish_episode without private state.
 
     Reward and task checker outputs are intentionally withheld until
-    ``finish_episode``.  Every accepted ``step_eef`` returns the actual
+    ``finish_episode``.  Every accepted ``step_osc_target`` returns the actual
     post-execution observation from the same simulator trajectory.
     """
 
@@ -87,7 +87,7 @@ class LiberoAgentEnv:
             "observation": self._public_observation(frame_index=0),
         }
 
-    def step_eef(
+    def step_osc_target(
         self,
         delta_position_m: Sequence[float] = (0.0, 0.0, 0.0),
         delta_rotation_rotvec_rad: Sequence[float] = (0.0, 0.0, 0.0),

@@ -45,7 +45,7 @@ clipped rather than rejected.
 The v1 implementation exposes a physical delta command:
 
 ```text
-step_eef(
+osc_step(
   delta_position_m=[dx, dy, dz],
   delta_rotation_rotvec_rad=[rx, ry, rz],
   delta_gripper_width_m=dw,
@@ -91,22 +91,44 @@ must declare one exact Euler convention and convert the composed rotation once
 to a matrix / rotation vector. Treating RPY components as three independent
 normalized OSC components would be incorrect.
 
+## Native OSC sequence A/B design record
+
+The metric `osc-step` interface remains the default. A subsequent controlled
+A/B will add a mutually exclusive native `osc-sequence` condition so that an
+Agent can use the same per-control-cycle action semantics as the source LIBERO
+demonstrations without an offline conversion to Agent-specific macro actions.
+
+One accepted `osc-sequence` submission contains between 1 and 20 normalized
+7D `OSC_POSE` micro actions. Each vector has the native LIBERO component order
+`[dx, dy, dz, rx, ry, rz, gripper]`; every finite component must be within
+`[-1, 1]`. The server executes the vectors sequentially, with exactly one
+LIBERO policy interval per micro action, and returns one actual observation
+after the submitted sequence. Intermediate simulation frames and
+proprioception remain evaluator-private but are retained in the continuous
+audit recording.
+
+A native-sequence run permits at most 50 accepted submissions, so its total
+public control budget is bounded by 1,000 native policy intervals. One run
+exposes either metric `osc-step` or native `osc-sequence`, never both, keeping
+the action-interface A/B identifiable. `start` and `finish` retain their
+existing meanings, and only `finish` exposes official task success.
+
 ## Episode lifecycle
 
 The stateful interface is:
 
 ```text
 start_episode -> observation 0
-step_eef      -> execution metadata + actual next observation
+osc_step      -> execution metadata + actual next observation
 finish_episode -> final official success boolean
 ```
 
 Task reward and checker state are not returned by `start_episode` or
-`step_eef`. `finish_episode` exposes only final success and the number of
+`osc_step`. `finish_episode` exposes only final success and the number of
 accepted high-level actions.
 
 The initial state is settled with zero arm and hold-gripper commands before
-observation 0. Each `step_eef` also has a short post-action settle window. Thus
+observation 0. Each `osc_step` also has a short post-action settle window. Thus
 the observation is causally downstream of the action rather than a render of a
 requested target.
 
@@ -245,11 +267,11 @@ containment is evaluator-controlled. The public client exposes only:
 
 ```bash
 liberoctl start
-liberoctl step --position DX DY DZ --rotation RX RY RZ --gripper-delta-m DG
+liberoctl osc-step --position DX DY DZ --rotation RX RY RZ --gripper-delta-m DG
 liberoctl finish
 ```
 
-There is no `observe` or protocol `help` operation. `start` and `step` return a
+There is no `observe` or protocol `help` operation. `start` and `osc-step` return a
 small JSON receipt with the new observation ID, the relative
 `benchmark_inputs/current_observation/observation.json` path, and safe execution
 metadata. RGB, masks, and NPY depth are never expanded into terminal output.

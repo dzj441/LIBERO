@@ -71,9 +71,10 @@ It is explicitly described as a native normalized per-control-cycle
   corresponding to the controller's 0.5 rad output scale;
 - component 6 is the gripper drive command, where -1 opens and +1 closes.
 
-These actions are not declared compatible with the high-level metric
-`liberoctl step` interface. An Agent may inspect, transform, imitate, or ignore
-them.
+These per-control-cycle action vectors are not direct inputs to the high-level
+metric `liberoctl osc-step` interface. The latter accepts a Cartesian target
+delta and realizes it through the same LIBERO OSC_POSE controller. An Agent may
+inspect, transform, imitate, or ignore the source actions.
 
 Only the episode-level outcome `verified successful demonstration` is public.
 Per-step checker values, first-success timing, reward, object ground-truth
@@ -121,3 +122,45 @@ and object or goal poses may differ.
 ```
 
 With `--icl none`, no bundle and no ICL notice are provided.
+
+## Validated assets
+
+The P4 replay and fixed-demo projection pipeline has been exercised on both a
+direct pick-and-place task and a sequential articulated task:
+
+- `libero_object`, task 0: `pick up the alphabet soup and place it in the basket`;
+- `libero_goal`, task 3: `open the top drawer and put the bowl inside`.
+
+For the drawer-and-bowl task, `demo_0` replays to terminal success and remains
+successful for 12 consecutive control steps. Its evaluator-private P4 master
+contains 171 causal observation frames and 170 native OSC action transitions.
+The initial public annotations identify the bowl as `manipulated_object` and
+the complete cabinet as `goal_fixture`; private LIBERO instance names are not
+published in the projected bundle.
+
+## Contact-sensitive waypoint diagnostic
+
+Recorded EEF states must not be treated as interchangeable with controller
+commands. This was tested on the drawer-and-bowl `demo_0` using its exact
+initial MuJoCo state:
+
+- native OSC action replay opens the top drawer from `0.0` to approximately
+  `-0.148 m` and completes the task;
+- tracking all 170 recorded EEF poses through `BaseFrameOSCExecutor` leaves the
+  drawer at approximately `+0.0016 m`, even though most EEF targets are reached
+  within 1--2 mm;
+- removing post-action settling, or tracking every fifth EEF pose, does not
+  recover the drawer interaction;
+- from the demonstrated handle pose, a pure `+0.15 m` pull does not move the
+  drawer, while a force-biased `[-0.01, +0.15, -0.03] m` target opens it to
+  approximately `-0.148 m` through the same high-level executor.
+
+During the native pull, the controller repeatedly requests several centimetres
+of negative X/Z displacement while the measured EEF barely moves on those
+axes. That unobserved pose error supplies the contact force that seats the
+finger behind the handle. The measured state trajectory records the resulting
+motion, but not this controller intent. The source OSC actions therefore remain
+an essential part of the demonstration contract for contact-rich tasks.
+
+Evaluator-private reports and videos for this diagnostic are written under
+`outputs/diagnostics/drawer_bowl_demo0_eef_waypoints_*`.

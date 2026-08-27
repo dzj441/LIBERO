@@ -18,7 +18,7 @@ from .environment import LiberoAgentEnv
 
 
 class AgentEpisodeService:
-    """Expose exactly start / step / finish and keep evaluator-private audit data."""
+    """Expose exactly start / osc_step / finish and keep private audit data."""
 
     def __init__(
         self,
@@ -54,12 +54,12 @@ class AgentEpisodeService:
         command = request.get("command")
         if command == "start":
             response = self._start()
-        elif command == "step":
-            response = self._step(request)
+        elif command == "osc_step":
+            response = self._osc_step(request)
         elif command == "finish":
             response = self._finish()
         else:
-            raise ValueError("unknown command; expected start, step, or finish")
+            raise ValueError("unknown command; expected start, osc_step, or finish")
         self._record_event(request=request, response=response)
         return response
 
@@ -103,10 +103,10 @@ class AgentEpisodeService:
             "execution": {},
         }
 
-    def _step(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def _osc_step(self, request: Mapping[str, Any]) -> dict[str, Any]:
         if self.state != "active":
-            raise RuntimeError("step requires one active episode")
-        result = self.agent_env.step_eef(
+            raise RuntimeError("osc_step requires one active episode")
+        result = self.agent_env.step_osc_target(
             delta_position_m=request.get("delta_position_m", (0.0, 0.0, 0.0)),
             delta_rotation_rotvec_rad=request.get(
                 "delta_rotation_rotvec_rad", (0.0, 0.0, 0.0)

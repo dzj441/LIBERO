@@ -304,7 +304,10 @@ def build_task_prompt(
         icl_notice = (
             "\nA verified successful demonstration from a separate episode of "
             "the same task is available at `benchmark_inputs/expert_demo/`. "
-            "The current scene configuration and object or goal poses may differ.\n"
+            "The current scene configuration and object or goal poses may differ. "
+            "The demonstration records the expert's native per-control-cycle "
+            "OSC_POSE actions and measured EEF state observations. The measured "
+            "EEF poses are observations, not actions.\n"
         )
     return f"""{instruction}
 {icl_notice}
@@ -312,7 +315,7 @@ def build_task_prompt(
 A LIBERO episode has been prepared for you.
 
 1. Run `liberoctl start` exactly once to begin and receive the initial observation.
-2. Control the robot with `liberoctl step --position DX DY DZ --rotation RX RY RZ --gripper-delta-m DG`. Position deltas are robot-base-frame metres. Rotation deltas are robot-base-frame rotation vectors in radians. DG is the change in total jaw opening width in metres: positive opens, negative closes, and zero preserves the current gripper target and grip force. A target outside the physical gripper-width range is rejected.
+2. Control the robot with `liberoctl osc-step --position DX DY DZ --rotation RX RY RZ --gripper-delta-m DG`. Each command specifies a metric Cartesian target delta executed through LIBERO's OSC_POSE controller. Position deltas are robot-base-frame metres. Rotation deltas are robot-base-frame rotation vectors in radians. DG is the change in total jaw opening width in metres: positive opens, negative closes, and zero preserves the current gripper target and grip force. A target outside the physical gripper-width range is rejected.
 3. Wait for each step to complete, then inspect `benchmark_inputs/current_observation/observation.json` and any referenced files before issuing another step.
 4. When you have completed the task, run `liberoctl finish` exactly once. Only finish reports official task success.
 """
@@ -377,7 +380,7 @@ def _prepare_workspace(
             "schema_version": "libero.agent_workspace.v1",
             "run_id": run_id,
             "episode_resumable": False,
-            "operations": ["start", "step", "finish"],
+            "operations": ["start", "osc_step", "finish"],
             "observation_retention": "current_only",
             "icl_condition": icl_condition,
             "expert_demo": (

@@ -222,7 +222,7 @@ class BaseFrameOSCExecutor:
             control_steps += 1
             motion_steps += 1
 
-        # A true no-op still advances one policy cycle so that step_eef always
+        # A true no-op still advances one policy cycle so that osc_step always
         # has causal observation semantics.
         if raw_obs is None:
             raw_action, _position_error, _rotation_error = correction_action(0.0)
