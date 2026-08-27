@@ -121,3 +121,12 @@ and object or goal poses may differ.
 ```
 
 With `--icl none`, no bundle and no ICL notice are provided.
+
+## Expansion TODOs
+
+- Add `libero_goal` task ID 3,
+  `open_the_top_drawer_and_put_the_bowl_inside`, as the first articulated,
+  strongly ordered task. The drawer starts closed, so the Agent must open it
+  before placing the bowl inside. Replay and freeze one verified P4 master,
+  validate the bowl/cabinet annotation roles, and accept the integration only
+  after a real P4 fixed-demo Codex rollout.
