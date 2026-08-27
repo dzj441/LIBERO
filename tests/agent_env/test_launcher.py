@@ -14,6 +14,18 @@ def test_prompt_is_nonstrategic_and_documents_delta_gripper_workflow():
     assert "positive opens, negative closes" in prompt
     assert "liberoctl finish" in prompt
     assert "waypoint" not in prompt.lower()
+    assert "expert_demo" not in prompt
+
+
+def test_fixed_demo_prompt_only_adds_separate_episode_notice():
+    prompt = build_task_prompt(
+        "pick up the alphabet soup and place it in the basket",
+        icl_condition="fixed_demo",
+    )
+    assert "benchmark_inputs/expert_demo/" in prompt
+    assert "separate episode of the same task" in prompt
+    assert "object or goal poses may differ" in prompt
+    assert "imitate" not in prompt.lower()
 
 
 def test_codex_command_is_persistent_one_shot_and_noninteractive():

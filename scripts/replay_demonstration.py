@@ -18,6 +18,7 @@ from libero.libero.utils.demonstration_replay import (  # noqa: E402
     run_action_replay,
     write_replay_report,
 )
+from libero.libero.agent_env.fixed_demo import P4ReplayMasterRecorder  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,6 +79,14 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Return exit status 0 even when stable checker verification fails",
     )
+    parser.add_argument(
+        "--p4-master-dir",
+        help=(
+            "Atomically publish a verified P4 replay master at this path. "
+            "This enables RGB, metric depth, camera calibration, initial "
+            "bbox/mask, state, proprioception, and causal post-action capture."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -99,22 +108,43 @@ def main() -> int:
         bddl_root=args.bddl_root,
     )
     video_path = output_dir / "replay.mp4" if args.save_video else None
-    report = run_action_replay(
-        episode,
-        seed=args.seed,
-        settle_steps=args.settle_steps,
-        stable_success_steps=args.stable_success_steps,
-        video_path=video_path,
-        camera_height=args.camera_height,
-        camera_width=args.camera_width,
-        video_stride=args.video_stride,
-        video_fps=args.video_fps,
-        render_gpu_device_id=args.render_gpu_device_id,
+    recorder = (
+        P4ReplayMasterRecorder(
+            args.p4_master_dir,
+            episode,
+            camera_height=args.camera_height,
+            camera_width=args.camera_width,
+        )
+        if args.p4_master_dir
+        else None
     )
+    master_receipt = None
+    try:
+        report = run_action_replay(
+            episode,
+            seed=args.seed,
+            settle_steps=args.settle_steps,
+            stable_success_steps=args.stable_success_steps,
+            video_path=video_path,
+            camera_height=args.camera_height,
+            camera_width=args.camera_width,
+            video_stride=args.video_stride,
+            video_fps=args.video_fps,
+            render_gpu_device_id=args.render_gpu_device_id,
+            observation_callback=None if recorder is None else recorder.capture,
+        )
+        if recorder is not None and report["verified_success"]:
+            master_receipt = recorder.finalize(report)
+    finally:
+        if recorder is not None:
+            recorder.abort()
     report_path = write_replay_report(report, output_dir / "replay_report.json")
 
     print(json.dumps(report, indent=2, sort_keys=True))
     print(f"[report] {report_path}")
+    if master_receipt is not None:
+        print(json.dumps(master_receipt, indent=2, sort_keys=True))
+        print(f"[p4-master] {master_receipt['master']}")
     if report["verified_success"]:
         print("[verified] physical action replay passed")
         return 0

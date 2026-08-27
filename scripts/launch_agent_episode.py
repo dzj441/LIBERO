@@ -19,6 +19,7 @@ import time
 from typing import Any, Mapping
 
 from libero.libero.benchmark import get_benchmark
+from libero.libero.agent_env.fixed_demo import project_fixed_demo_bundle
 
 
 def parse_args() -> argparse.Namespace:
@@ -41,11 +42,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--codex-model")
     parser.add_argument("--codex-effort")
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
+    parser.add_argument(
+        "--icl",
+        choices=("none", "fixed_demo"),
+        default="none",
+        help="Static in-context demonstration condition",
+    )
+    parser.add_argument(
+        "--fixed-demo-master",
+        type=Path,
+        help="Evaluator-private verified P4 replay master for --icl fixed_demo",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.icl == "fixed_demo" and args.fixed_demo_master is None:
+        raise ValueError("--icl fixed_demo requires --fixed-demo-master")
+    if args.icl == "none" and args.fixed_demo_master is not None:
+        raise ValueError("--fixed-demo-master is valid only with --icl fixed_demo")
     source_root = Path(__file__).resolve().parents[1]
     canonical_root = _canonical_repository_root(source_root)
     run_root = (args.run_root or canonical_root / "agent_runs").resolve()
@@ -67,8 +83,27 @@ def main() -> int:
         run_directory.rmdir()
         raise
 
-    prompt = build_task_prompt(_task_instruction(args.suite, args.task_id))
-    _prepare_workspace(source_root, workspace, prompt, run_id)
+    task_instruction = _task_instruction(args.suite, args.task_id)
+    prompt = build_task_prompt(task_instruction, icl_condition=args.icl)
+    _prepare_workspace(
+        source_root,
+        workspace,
+        prompt,
+        run_id,
+        icl_condition=args.icl,
+    )
+    icl_projection_receipt = None
+    if args.icl == "fixed_demo":
+        icl_projection_receipt = project_fixed_demo_bundle(
+            master_root=args.fixed_demo_master,
+            destination=workspace / "benchmark_inputs" / "expert_demo",
+            profile=args.profile,
+            expected_task_instruction=task_instruction,
+        )
+        _write_json_atomic(
+            run_directory / "icl_projection_receipt.json",
+            icl_projection_receipt,
+        )
     socket_path = workspace / ".libero" / "control.sock"
     server_environment, driver_version = _server_environment(
         source_root, nvidia_runtime_root
@@ -81,6 +116,8 @@ def main() -> int:
         "task_id": args.task_id,
         "init_state_id": args.init_state_id,
         "profile": args.profile,
+        "icl_condition": args.icl,
+        "fixed_demo_available": args.icl == "fixed_demo",
         "seed": args.seed,
         "resolution": args.resolution,
         "render_gpu_device_id": args.render_gpu_device_id,
@@ -256,9 +293,21 @@ def main() -> int:
     return 0 if codex_return_code == 0 else 2
 
 
-def build_task_prompt(task_instruction: str) -> str:
+def build_task_prompt(
+    task_instruction: str, *, icl_condition: str = "none"
+) -> str:
     instruction = " ".join(str(task_instruction).split())
+    if icl_condition not in {"none", "fixed_demo"}:
+        raise ValueError(f"unsupported ICL condition: {icl_condition!r}")
+    icl_notice = ""
+    if icl_condition == "fixed_demo":
+        icl_notice = (
+            "\nA verified successful demonstration from a separate episode of "
+            "the same task is available at `benchmark_inputs/expert_demo/`. "
+            "The current scene configuration and object or goal poses may differ.\n"
+        )
     return f"""{instruction}
+{icl_notice}
 
 A LIBERO episode has been prepared for you.
 
@@ -306,7 +355,12 @@ def _task_instruction(suite: str, task_id: int) -> str:
 
 
 def _prepare_workspace(
-    source_root: Path, workspace: Path, prompt: str, run_id: str
+    source_root: Path,
+    workspace: Path,
+    prompt: str,
+    run_id: str,
+    *,
+    icl_condition: str,
 ) -> None:
     (workspace / ".libero").mkdir(mode=0o700)
     (workspace / "benchmark_inputs").mkdir()
@@ -325,6 +379,12 @@ def _prepare_workspace(
             "episode_resumable": False,
             "operations": ["start", "step", "finish"],
             "observation_retention": "current_only",
+            "icl_condition": icl_condition,
+            "expert_demo": (
+                "benchmark_inputs/expert_demo"
+                if icl_condition == "fixed_demo"
+                else None
+            ),
         },
     )
 

@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import h5py
 import numpy as np
@@ -12,6 +13,7 @@ from libero.libero.utils.demonstration_replay import (
     maximum_true_streak,
     normalize_demo_key,
     resolve_bddl_file,
+    run_action_replay,
 )
 
 
@@ -79,6 +81,69 @@ class DemonstrationReplaySchemaTest(unittest.TestCase):
             self.assertEqual(episode.robots, ("Panda",))
             self.assertEqual(episode.bddl_file, bddl.resolve())
             self.assertEqual(episode.init_state_source, "episode_attribute")
+
+
+def test_p4_callback_is_initial_after_settle_then_causal_post_action(monkeypatch):
+    from libero.libero.envs import env_wrapper
+
+    instances = []
+
+    class FakeControlEnv:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.steps = 0
+            self.closed = False
+            instances.append(self)
+
+        def reset(self):
+            return {"counter": -1}
+
+        def set_init_state(self, _state):
+            return {"counter": 0}
+
+        def step(self, _action):
+            self.steps += 1
+            return {"counter": self.steps}, 0.0, False, {}
+
+        def check_success(self):
+            return True
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(env_wrapper, "ControlEnv", FakeControlEnv)
+    episode = SimpleNamespace(
+        bddl_file=Path("task.bddl"),
+        robots=("Panda",),
+        controller="OSC_POSE",
+        control_freq=20,
+        actions=np.zeros((2, 7), dtype=np.float64),
+        init_state=np.zeros(3),
+        dataset_path=Path("demo.hdf5"),
+        demo_key="demo_0",
+        task_instruction="task",
+        problem_name="problem",
+        env_name="environment",
+        init_state_source="episode_attribute",
+    )
+    captured = []
+
+    def callback(_env, observation, frame_index, source_action_index):
+        captured.append((frame_index, source_action_index, observation["counter"]))
+
+    report = run_action_replay(
+        episode,
+        settle_steps=2,
+        stable_success_steps=1,
+        observation_callback=callback,
+    )
+
+    assert report["verified_success"] is True
+    assert captured == [(0, None, 2), (1, 0, 3), (2, 1, 4)]
+    assert instances[0].kwargs["camera_depths"] is True
+    assert instances[0].kwargs["camera_segmentations"] == "instance"
+    assert instances[0].kwargs["use_object_obs"] is False
+    assert instances[0].closed is True
 
 
 if __name__ == "__main__":

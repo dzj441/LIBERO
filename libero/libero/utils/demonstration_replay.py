@@ -12,7 +12,7 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 import h5py
 import numpy as np
@@ -272,6 +272,9 @@ def run_action_replay(
     video_stride: int = 1,
     video_fps: Optional[float] = None,
     render_gpu_device_id: int = -1,
+    observation_callback: Optional[
+        Callable[[Any, Mapping[str, Any], int, Optional[int]], None]
+    ] = None,
 ) -> dict[str, Any]:
     """Execute a demonstration through LIBERO and return a verification report.
 
@@ -300,18 +303,21 @@ def run_action_replay(
     from libero.libero.envs.env_wrapper import ControlEnv
 
     render = video_path is not None
+    capture_observations = observation_callback is not None
+    use_camera_observations = render or capture_observations
     env = ControlEnv(
         bddl_file_name=str(episode.bddl_file),
         robots=list(episode.robots),
         controller=episode.controller,
         has_renderer=False,
-        has_offscreen_renderer=render,
-        use_camera_obs=render,
+        has_offscreen_renderer=use_camera_observations,
+        use_camera_obs=use_camera_observations,
         camera_names=list(DEFAULT_CAMERA_NAMES),
         camera_heights=camera_height,
         camera_widths=camera_width,
-        camera_depths=False,
-        camera_segmentations=None,
+        camera_depths=capture_observations,
+        camera_segmentations="instance" if capture_observations else None,
+        use_object_obs=False,
         render_gpu_device_id=render_gpu_device_id,
         ignore_done=True,
         control_freq=episode.control_freq,
@@ -343,12 +349,19 @@ def run_action_replay(
                 "renderer": decode_gl_string(GL.GL_RENDERER),
                 "version": decode_gl_string(GL.GL_VERSION),
             }
-            frames.append(_compose_camera_frame(obs))
-
         settle_action = np.zeros(7, dtype=np.float64)
         settle_action[-1] = episode.actions[0, -1]
         for _ in range(settle_steps):
             obs, _, _, _ = env.step(settle_action)
+
+        # The expert bundle's initial observation is the stable state the
+        # policy actually acts from, not the transient returned immediately by
+        # set_init_state().  Every later frame is captured after its causal
+        # source action has been executed by the same environment.
+        if render:
+            frames.append(_compose_camera_frame(obs))
+        if observation_callback is not None:
+            observation_callback(env, obs, 0, None)
 
         first_success_step: Optional[int] = None
         for step_index, action in enumerate(episode.actions):
@@ -359,6 +372,8 @@ def run_action_replay(
                 first_success_step = step_index
             if render and step_index % video_stride == 0:
                 frames.append(_compose_camera_frame(obs))
+            if observation_callback is not None:
+                observation_callback(env, obs, step_index + 1, step_index)
     finally:
         env.close()
 
