@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import colorsys
 from copy import deepcopy
 import json
 import os
@@ -13,11 +14,7 @@ from typing import Any, Mapping
 import numpy as np
 from PIL import Image, ImageDraw
 
-
-ROLE_COLORS = {
-    "manipulated_object": (255, 64, 64),
-    "goal_fixture": (64, 255, 96),
-}
+from .annotation_contract import validate_task_entity_mapping
 
 
 def write_public_observation(
@@ -25,8 +22,8 @@ def write_public_observation(
 ) -> Path:
     """Write a projected frame and return its ``observation.json`` path.
 
-    The input must already be public.  This writer knows only public semantic
-    roles and cannot serialize raw segmentation IDs or private instance names.
+    The input must already be public. This writer knows only anonymous task
+    entities and cannot serialize raw segmentation IDs or private names.
     """
 
     output_directory = Path(output_directory)
@@ -69,23 +66,25 @@ def write_public_observation(
         annotations_root = output_directory / "annotations"
         for camera_name in ("head", "wrist"):
             camera_annotations = metadata["annotations"]["cameras"][camera_name]
+            task_entities = camera_annotations["task_entities"]
+            entity_ids = validate_task_entity_mapping(task_entities)
             camera_directory = annotations_root / camera_name
             camera_directory.mkdir(parents=True, exist_ok=True)
             rgb = np.asarray(
                 observation["cameras"][camera_name]["rgb"], dtype=np.uint8
             )
             overlay = Image.fromarray(rgb).convert("RGBA")
-            for role in ("manipulated_object", "goal_fixture"):
-                annotation = camera_annotations[role]
+            for index, entity_id in enumerate(entity_ids):
+                annotation = task_entities[entity_id]
                 mask = np.asarray(annotation.pop("mask"), dtype=np.bool_)
-                mask_path = camera_directory / f"{role}_mask.png"
+                mask_path = camera_directory / f"{entity_id}_mask.png"
                 Image.fromarray(mask.astype(np.uint8) * 255).save(mask_path)
                 annotation["mask_file"] = str(mask_path.relative_to(output_directory))
                 overlay = _add_annotation_overlay(
                     overlay,
                     mask,
                     annotation["bbox_xyxy"],
-                    ROLE_COLORS[role],
+                    _task_entity_color(index),
                 )
             overlay_path = camera_directory / "annotations_overlay.png"
             overlay.convert("RGB").save(overlay_path)
@@ -155,6 +154,14 @@ def _depth_preview(depth: np.ndarray, valid: np.ndarray) -> np.ndarray:
     # Near is bright so foreground geometry remains easy to inspect.
     preview[valid] = np.round((1.0 - normalized[valid]) * 255.0).astype(np.uint8)
     return preview
+
+
+def _task_entity_color(index: int) -> tuple[int, int, int]:
+    """Generate a stable, role-neutral overlay color for an anonymous entity."""
+
+    hue = (0.03 + index * 0.6180339887498949) % 1.0
+    red, green, blue = colorsys.hsv_to_rgb(hue, 0.75, 1.0)
+    return tuple(int(round(channel * 255.0)) for channel in (red, green, blue))
 
 
 def _add_annotation_overlay(

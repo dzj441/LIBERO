@@ -59,6 +59,20 @@ def test_native_sequence_prompt_documents_exact_bounded_micro_action_contract():
     assert "liberoctl osc-step" not in prompt
 
 
+def test_mcp_prompt_names_only_the_three_robot_tools():
+    prompt = build_task_prompt(
+        "open the top drawer and put the bowl inside",
+        icl_condition="fixed_demo",
+        action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+        control_transport="mcp",
+    )
+    assert "`start_episode` robot tool" in prompt
+    assert "`osc_sequence` robot tool" in prompt
+    assert "`finish_episode` robot tool" in prompt
+    assert "liberoctl" not in prompt
+    assert "1 to 20 normalized 7D OSC_POSE micro actions" in prompt
+
+
 def test_native_workspace_exposes_only_the_selected_wire_operation(tmp_path):
     source_root = Path(__file__).resolve().parents[2]
     workspace = tmp_path / "workspace"
@@ -81,6 +95,30 @@ def test_native_workspace_exposes_only_the_selected_wire_operation(tmp_path):
     assert not (workspace / "run_manifest.json").exists()
 
 
+def test_mcp_workspace_exposes_adapter_without_liberoctl(tmp_path):
+    source_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _prepare_workspace(
+        source_root,
+        workspace,
+        "prompt",
+        "test-run",
+        icl_condition="none",
+        action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+        control_transport="mcp",
+    )
+    episode = json.loads((workspace / ".libero/episode.json").read_text())
+    assert episode["operations"] == [
+        "start_episode",
+        "osc_sequence",
+        "finish_episode",
+    ]
+    assert episode["control_transport"] == "mcp"
+    assert (workspace / "bin/libero_mcp_server").stat().st_mode & 0o111
+    assert not (workspace / "bin/liberoctl").exists()
+
+
 def test_codex_command_is_persistent_one_shot_and_noninteractive():
     command = build_codex_command(
         codex_bin="codex",
@@ -95,6 +133,23 @@ def test_codex_command_is_persistent_one_shot_and_noninteractive():
     assert "--ephemeral" not in command
     assert "--no-alt-screen" not in command
     assert command[-1] == "task prompt"
+
+
+def test_codex_command_injects_required_workspace_local_mcp(tmp_path):
+    server = tmp_path / "bin/libero_mcp_server"
+    server.parent.mkdir()
+    server.write_text("#!/bin/sh\n", encoding="utf-8")
+    command = build_codex_command(
+        codex_bin="codex",
+        prompt="task prompt",
+        workspace=tmp_path,
+        control_transport="mcp",
+    )
+    rendered = "\n".join(command)
+    assert f'mcp_servers.libero.command="{server}"' in rendered
+    assert "mcp_servers.libero.required=true" in rendered
+    assert 'mcp_servers.libero.default_tools_approval_mode="auto"' in rendered
+    assert '"start_episode", "osc_sequence", "finish_episode"' in rendered
 
 
 def test_system_temp_workspace_is_random_and_left_for_system_cleanup(tmp_path):

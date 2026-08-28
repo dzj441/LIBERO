@@ -309,7 +309,7 @@ function renderSelectedStep() {
   elements.stepCounter.textContent = `${state.selectedStep + 1} / ${steps.length}`;
   elements.previousStep.disabled = state.selectedStep <= 0;
   elements.nextStep.disabled = state.selectedStep >= steps.length - 1;
-  elements.stepTitle.textContent = `A${step.index} · activity before liberoctl ${step.command}`;
+  elements.stepTitle.textContent = `A${step.index} · activity before robot ${step.command}`;
   renderActivities(elements.activityList, step.agent_activity || []);
   elements.actionStatus.replaceChildren();
   const status = document.createElement("span");

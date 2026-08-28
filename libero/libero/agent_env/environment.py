@@ -13,7 +13,7 @@ from .control import (
     NativeOSCSequenceExecutor,
     OSCControlConfig,
 )
-from .observation import AnnotationRoles, MasterObservationCollector
+from .observation import MasterObservationCollector, TaskEntitySelection
 from .profiles import ObservationProfile, project_public_observation
 
 
@@ -34,7 +34,7 @@ class LiberoAgentEnv:
         *,
         task_instruction: str,
         initial_state: np.ndarray | None = None,
-        annotation_roles: AnnotationRoles | None = None,
+        task_entities: TaskEntitySelection | None = None,
         control_config: OSCControlConfig | None = None,
         initial_settle_control_steps: int = 10,
         max_agent_steps: int | None = None,
@@ -58,7 +58,7 @@ class LiberoAgentEnv:
             env,
             camera_height=camera_height,
             camera_width=camera_width,
-            annotation_roles=annotation_roles,
+            task_entities=task_entities,
         )
         self.private_control_step_callback = private_control_step_callback
         self.executor = BaseFrameOSCExecutor(

@@ -141,7 +141,7 @@ strict public superset of the previous level.
 | Level | Public contents |
 | --- | --- |
 | Level 1 | Head RGB, wrist RGB, 7 arm joint positions, two gripper finger joint positions, gripper width, EEF pose |
-| Level 2 | Level 1 plus initial-observation-only bbox and binary mask for `manipulated_object` and `goal_fixture` in both cameras |
+| Level 2 | Level 1 plus initial-observation-only bbox and binary mask for every anonymous task entity in both cameras |
 | Level 3 | Level 2 plus arm joint velocity, gripper velocity, controller-commanded arm torque, EEF force, EEF torque, and EEF 6D twist |
 | Level 4 | Level 3 plus head/wrist metric depth, valid-depth mask, intrinsics, and dynamic extrinsics |
 
@@ -158,21 +158,21 @@ quaternion ordering XYZW.
 ### Level 2 annotations
 
 Annotations exist only on `obs_000000`. Later frames contain no annotation
-field. Each camera contains only the public roles:
+field. The contract is `libero.task_entities.v1`; each camera contains a
+variable-cardinality `task_entities` mapping with contiguous, role-neutral
+identifiers such as `entity_000`, `entity_001`, and so on. Each entity has a
+boolean mask, visible pixel count, visibility flag, and bbox in
+`[x_min, y_min, x_max_exclusive, y_max_exclusive]` convention.
 
-- `manipulated_object`
-- `goal_fixture`
-
-Each role has a boolean mask, visible pixel count, visibility flag, and bbox in
-`[x_min, y_min, x_max_exclusive, y_max_exclusive]` convention. Raw instance
-names and segmentation IDs never enter the public frame or files.
-
-For pick/place tasks, roles are inferred from the parsed goal and containment
-region. Ambiguous tasks fail closed and require an explicit private
-`AnnotationRoles` mapping. A static audit inferred roles for 116 of the 130
-shipped BDDL tasks. The 14 deliberate failures are drawer, microwave, or stove
-articulation tasks whose single `target + goal` annotation semantics must be
-defined separately rather than guessed.
+The private selector starts from BDDL `obj_of_interest`. A referenced region is
+resolved only to its host object or fixture, and duplicate hosts are removed.
+Thus an articulation task may expose one mask for the complete cabinet, but it
+does not expose a top-drawer, handle, or goal-region oracle. Public IDs do not
+state which entity is manipulated or is a goal, and they contain no class,
+private instance, geom, or segmentation-ID metadata. IDs are aligned between
+head and wrist within one episode; the contract declares no correspondence
+between a demonstration episode and the target episode. A static audit covers
+all 130 shipped tasks with between one and four task entities.
 
 ### Level 3 dynamic proprioception
 
@@ -228,8 +228,8 @@ Level 1 output physically contains no depth or annotation files.
 
 The official coding-agent runtime is:
 
-> isolated Agent workspace + background LIBERO server + Unix socket + a
-> three-operation `liberoctl` + current-only disk observation.
+> isolated Agent workspace + background LIBERO server + Unix socket + one
+> selected CLI or MCP adapter + current-only disk observation.
 
 One invocation of `scripts/launch_agent_episode.py` creates both sides:
 
@@ -252,7 +252,7 @@ LIBERO/agent_runs/<run_id>/                 evaluator-private
   TASK_PROMPT.txt
   .libero/control.sock                      live episode only
   .libero/episode.json
-  bin/liberoctl
+  bin/liberoctl | bin/libero_mcp_server
   benchmark_inputs/current_observation/
   scratch/
 ```
@@ -269,9 +269,9 @@ socket via `LIBERO_CONTROL_SOCKET`. This is one saved, auditable Codex session,
 but its CLI process exits after
 the Agent's final message instead of waiting at an interactive input box. Hook
 trust and Codex's inner sandbox prompts are bypassed because deployment
-containment is evaluator-controlled. The public client exposes `start`,
-`finish`, and exactly one action operation selected for the run. The default
-metric condition is:
+containment is evaluator-controlled. The CLI adapter exposes `start`, `finish`,
+and exactly one action operation selected for the run. The default metric
+condition is:
 
 ```bash
 liberoctl start
@@ -284,6 +284,20 @@ The native A/B condition replaces `osc-step` with:
 ```bash
 liberoctl osc-sequence --actions-file PATH
 ```
+
+The MCP condition is a parallel STDIO adapter over the same Unix-socket
+service. It exposes exactly three typed tools:
+
+```text
+start_episode
+osc_sequence(actions: 1..20 normalized 7D vectors)
+finish_episode
+```
+
+The MCP workspace contains no `liberoctl` executable, so the declared robot
+control surface is unambiguous. The CLI implementation remains available for
+debugging and controlled A/B comparisons. Both adapters bind every action to
+the latest public observation ID and receive the same service response.
 
 `PATH` is read by the client and only its JSON array is sent to the server; the
 server never receives or reads an Agent filesystem path. There is no `observe`
@@ -300,7 +314,8 @@ notification. No separate sleep, file polling, or asynchronous notification is
 required. The client also reads the current public `observation_id` and binds it
 to every action and `finish` request. The server rejects missing or stale IDs
 before advancing the simulation, preventing overlapping commands from silently
-acting on a newer frame.
+acting on a newer frame. MCP calls have the same synchronous and
+observation-binding behavior.
 
 The current directory is replaced from a fully written staging tree after
 every observation. Level 2 annotations therefore disappear physically after
@@ -328,6 +343,21 @@ python scripts/launch_agent_episode.py \
   --action-interface native_osc_sequence
 ```
 
+Select the MCP adapter with:
+
+```bash
+python scripts/launch_agent_episode.py \
+  --suite libero_object \
+  --task-id 0 \
+  --profile level4 \
+  --action-interface native_osc_sequence \
+  --control-transport mcp
+```
+
+Codex starts the workspace-local server as a required STDIO MCP process using
+per-run configuration overrides; the evaluator's global MCP configuration is
+not modified. The MCP process is only an adapter and terminates with Codex.
+
 The launcher passes `HTTPS_PROXY=http://127.0.0.1:7890` to Codex by default.
 The explicit URI scheme avoids unnecessary WebSocket reconnect attempts while
 using the same local proxy endpoint. The
@@ -347,10 +377,11 @@ These audit artifacts are not copied into the Agent workspace.
 ### Prompt boundary
 
 `TASK_PROMPT.txt` contains only the official task instruction and nonstrategic
-interface semantics: call `start` once, use physical robot-base-frame position
-and rotation-vector deltas plus total jaw-width delta, inspect each returned
-current observation, and call `finish` once. It provides no object pose,
-waypoint, action magnitude recommendation, or policy hint.
+semantics of the selected interface. It names the selected start/action/finish
+operations, requires inspection of each returned current observation, and
+provides no object pose, waypoint, action magnitude recommendation, or policy
+hint. MCP initialization instructions repeat only the cross-tool lifecycle and
+rate limits.
 
 ### Process and resume semantics
 
@@ -383,8 +414,8 @@ master frame and verify that none survive projection.
 LIBERO previously ignored `use_object_obs=False` and also crashed along that
 path. This branch fixes the lifecycle so the live raw observation itself no
 longer contains object positions or object-to-EEF poses. Instance segmentation
-is still generated host-side to create Level 2 annotations, but only the two
-semantic masks and bboxes are projected.
+is still generated host-side to create Level 2 annotations, but only anonymous
+task-entity masks and bboxes are projected.
 
 ## Current validation
 
@@ -392,7 +423,9 @@ semantic masks and bboxes are projected.
   annotations, nested allowlist leakage, rotation conversions, normalized OSC
   bounds, and artifact materialization.
 - A physical Level 4 reset on `libero_object/0` produced aligned head/wrist RGB,
-  depth, calibration, and both semantic annotations.
+  depth, calibration, and anonymous task-entity annotations.
+- The task-entity selector parses all 130 shipped BDDL tasks without a manual
+  role registry; every task resolves to one through four anonymous entities.
 - A combined +1 cm Z and +0.08 rad base-frame rotation reached tolerance via
   the real OSC controller; later observation contained no annotations.
 - A single +20 cm base-Z command was accepted, used 23 native motion cycles,
@@ -414,5 +447,9 @@ semantic masks and bboxes are projected.
   from a missed grasp, maintained a contact-blocked metric gripper target while
   carrying the object, adapted after one out-of-range width request was
   rejected, and received official `success=true` from `finish`.
+- A real Level 4 + fixed-demo Codex rollout through the MCP adapter completed
+  Alphabet Soup successfully with 12 accepted `osc_sequence` calls. All 14
+  lifecycle/action MCP events aligned one-to-one with `actions.jsonl`, and all
+  13 explicit image views remained available in the Viewer.
 
-ICL/replay and full task-suite annotation mappings remain separate work.
+The fixed-demo projection uses the same task-entity schema as online frames.

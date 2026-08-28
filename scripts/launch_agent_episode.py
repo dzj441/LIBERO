@@ -34,6 +34,11 @@ from libero.libero.agent_env.runtime_contract import (
 )
 
 
+CONTROL_TRANSPORTS = ("cli", "mcp")
+MCP_SERVER_NAME = "libero"
+MCP_TOOL_NAMES = ("start_episode", "osc_sequence", "finish_episode")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--suite", default="libero_object")
@@ -50,6 +55,12 @@ def parse_args() -> argparse.Namespace:
         choices=tuple(interface.value for interface in ActionInterface),
         default=ActionInterface.METRIC_OSC_STEP.value,
         help="Mutually exclusive public robot-control condition",
+    )
+    parser.add_argument(
+        "--control-transport",
+        choices=CONTROL_TRANSPORTS,
+        default="cli",
+        help="Agent-facing adapter over the same Unix-socket episode service",
     )
     parser.add_argument("--run-id")
     parser.add_argument("--run-root", type=Path)
@@ -86,6 +97,13 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     action_interface = ActionInterface.parse(args.action_interface)
+    if (
+        args.control_transport == "mcp"
+        and action_interface is not ActionInterface.NATIVE_OSC_SEQUENCE
+    ):
+        raise ValueError(
+            "the MCP adapter currently exposes only native_osc_sequence"
+        )
     if args.icl == "fixed_demo" and args.fixed_demo_master is None:
         raise ValueError("--icl fixed_demo requires --fixed-demo-master")
     if args.icl == "none" and args.fixed_demo_master is not None:
@@ -123,6 +141,7 @@ def main() -> int:
         task_instruction,
         icl_condition=args.icl,
         action_interface=action_interface,
+        control_transport=args.control_transport,
     )
     _prepare_workspace(
         source_root,
@@ -131,6 +150,7 @@ def main() -> int:
         run_id,
         icl_condition=args.icl,
         action_interface=action_interface,
+        control_transport=args.control_transport,
     )
     shutil.copy2(workspace / "TASK_PROMPT.txt", run_directory / "agent_prompt.txt")
     shutil.copy2(
@@ -188,6 +208,7 @@ def main() -> int:
         "initial_settle_control_steps": args.initial_settle_control_steps,
         "max_agent_steps": args.max_agent_steps,
         "action_interface": action_interface.value,
+        "control_transport": args.control_transport,
         "codex_binary": args.codex_bin,
         "codex_model_requested": args.codex_model,
         "codex_effort_requested": args.codex_effort,
@@ -240,6 +261,9 @@ def main() -> int:
         "episode_resumable": False,
         "codex_execution_mode": "exec",
         "transport": "unix_socket",
+        "agent_control_adapter": (
+            "mcp_stdio" if args.control_transport == "mcp" else "liberoctl_cli"
+        ),
         "observation_retention": "current_only",
         "render_backend": "egl",
         "nvidia_userspace_driver": driver_version,
@@ -332,6 +356,7 @@ def main() -> int:
             (os.fspath(workspace / "bin"), codex_environment.get("PATH", ""))
         )
         codex_environment["LIBERO_CONTROL_SOCKET"] = ".libero/control.sock"
+        codex_environment["LIBERO_AGENT_WORKSPACE"] = os.fspath(workspace)
         codex_environment["LIBERO_ACTION_INTERFACE"] = action_interface.value
         codex_environment["HTTPS_PROXY"] = args.https_proxy
         codex_command = build_codex_command(
@@ -339,6 +364,8 @@ def main() -> int:
             prompt=prompt,
             model=args.codex_model,
             effort=args.codex_effort,
+            workspace=workspace,
+            control_transport=args.control_transport,
         )
 
         print(f"run_id: {run_id}", flush=True)
@@ -444,18 +471,31 @@ def build_task_prompt(
     *,
     icl_condition: str = "none",
     action_interface: ActionInterface | str = ActionInterface.METRIC_OSC_STEP,
+    control_transport: str = "cli",
 ) -> str:
     instruction = " ".join(str(task_instruction).split())
     action_interface = ActionInterface.parse(action_interface)
+    if control_transport not in CONTROL_TRANSPORTS:
+        raise ValueError(f"unsupported control transport: {control_transport!r}")
+    if (
+        control_transport == "mcp"
+        and action_interface is not ActionInterface.NATIVE_OSC_SEQUENCE
+    ):
+        raise ValueError("MCP currently requires native_osc_sequence")
     if icl_condition not in {"none", "fixed_demo"}:
         raise ValueError(f"unsupported ICL condition: {icl_condition!r}")
     icl_notice = ""
     if icl_condition == "fixed_demo":
         compatibility_notice = ""
         if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE:
+            action_reference = (
+                "one `osc_sequence` micro action"
+                if control_transport == "mcp"
+                else "one `osc-sequence` micro action"
+            )
             compatibility_notice = (
                 " Each source action vector has the same component semantics as "
-                "one `osc-sequence` micro action."
+                f"{action_reference}."
             )
         icl_notice = (
             "\nA verified successful demonstration from a separate episode of "
@@ -466,7 +506,31 @@ def build_task_prompt(
             "EEF poses are observations, not actions."
             f"{compatibility_notice}\n"
         )
-    if action_interface is ActionInterface.METRIC_OSC_STEP:
+    if control_transport == "mcp":
+        start_instruction = (
+            "1. Call the `start_episode` robot tool exactly once to begin and "
+            "receive the initial observation."
+        )
+        control_instruction = (
+            "2. Control the robot with the `osc_sequence` robot tool. Its "
+            "`actions` argument is an array of 1 to "
+            f"{MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION} normalized 7D OSC_POSE "
+            "micro actions in `[dx, dy, dz, rx, ry, rz, gripper]` order. Every "
+            "component must be within [-1, 1]. Each vector executes one LIBERO "
+            "policy interval; translation 1.0 corresponds to 0.05 m, rotation "
+            "1.0 to a 0.5 rad rotation-vector component, gripper -1 opens, and "
+            "+1 closes. One sequence call counts as one Agent action, with at "
+            f"most {MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} accepted calls."
+        )
+        finish_instruction = (
+            "4. When you have completed the task, call the `finish_episode` robot "
+            "tool exactly once. Only finish reports official task success."
+        )
+    elif action_interface is ActionInterface.METRIC_OSC_STEP:
+        start_instruction = (
+            "1. Run `liberoctl start` exactly once to begin and receive the "
+            "initial observation."
+        )
         control_instruction = (
             "2. Control the robot with `liberoctl osc-step --position DX DY DZ "
             "--rotation RX RY RZ --gripper-delta-m DG`. Each command specifies "
@@ -477,7 +541,15 @@ def build_task_prompt(
             "closes, and zero preserves the current gripper target and grip force. "
             "A target outside the physical gripper-width range is rejected."
         )
+        finish_instruction = (
+            "4. When you have completed the task, run `liberoctl finish` exactly "
+            "once. Only finish reports official task success."
+        )
     else:
+        start_instruction = (
+            "1. Run `liberoctl start` exactly once to begin and receive the "
+            "initial observation."
+        )
         control_instruction = (
             "2. Control the robot with `liberoctl osc-sequence --actions-file "
             "PATH`. PATH must contain a JSON array of 1 to "
@@ -489,15 +561,19 @@ def build_task_prompt(
             "+1 closes. One sequence submission counts as one Agent action, with "
             f"at most {MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} accepted submissions."
         )
+        finish_instruction = (
+            "4. When you have completed the task, run `liberoctl finish` exactly "
+            "once. Only finish reports official task success."
+        )
     return f"""{instruction}
 {icl_notice}
 
 A LIBERO episode has been prepared for you.
 
-1. Run `liberoctl start` exactly once to begin and receive the initial observation.
+{start_instruction}
 {control_instruction}
 3. Wait for each step to complete, then inspect `benchmark_inputs/current_observation/observation.json` and any referenced files before issuing another step.
-4. When you have completed the task, run `liberoctl finish` exactly once. Only finish reports official task success.
+{finish_instruction}
 """
 
 
@@ -507,6 +583,8 @@ def build_codex_command(
     prompt: str,
     model: str | None = None,
     effort: str | None = None,
+    workspace: Path | None = None,
+    control_transport: str = "cli",
 ) -> list[str]:
     """Build a persistent, one-shot Codex CLI invocation for one episode."""
 
@@ -523,6 +601,40 @@ def build_codex_command(
         command.extend(("--model", model))
     if effort:
         command.extend(("--config", f'model_reasoning_effort="{effort}"'))
+    if control_transport == "mcp":
+        if workspace is None:
+            raise ValueError("MCP Codex launch requires the Agent workspace")
+        mcp_server = (workspace / "bin" / "libero_mcp_server").resolve()
+        command.extend(
+            (
+                "--config",
+                f'mcp_servers.{MCP_SERVER_NAME}.command={json.dumps(os.fspath(mcp_server))}',
+                "--config",
+                f'mcp_servers.{MCP_SERVER_NAME}.cwd={json.dumps(os.fspath(workspace))}',
+                "--config",
+                f'mcp_servers.{MCP_SERVER_NAME}.required=true',
+                "--config",
+                f'mcp_servers.{MCP_SERVER_NAME}.startup_timeout_sec=10',
+                "--config",
+                f'mcp_servers.{MCP_SERVER_NAME}.tool_timeout_sec=600',
+                "--config",
+                f'mcp_servers.{MCP_SERVER_NAME}.default_tools_approval_mode="auto"',
+                "--config",
+                (
+                    f'mcp_servers.{MCP_SERVER_NAME}.enabled_tools='
+                    + json.dumps(list(MCP_TOOL_NAMES))
+                ),
+                "--config",
+                (
+                    f'mcp_servers.{MCP_SERVER_NAME}.env_vars='
+                    + json.dumps(
+                        ["LIBERO_AGENT_WORKSPACE", "LIBERO_CONTROL_SOCKET"]
+                    )
+                ),
+            )
+        )
+    elif control_transport != "cli":
+        raise ValueError(f"unsupported control transport: {control_transport!r}")
     command.append(prompt)
     return command
 
@@ -545,16 +657,24 @@ def _prepare_workspace(
     *,
     icl_condition: str,
     action_interface: ActionInterface | str,
+    control_transport: str = "cli",
 ) -> None:
     action_interface = ActionInterface.parse(action_interface)
+    if control_transport not in CONTROL_TRANSPORTS:
+        raise ValueError(f"unsupported control transport: {control_transport!r}")
     (workspace / ".libero").mkdir(mode=0o700)
     (workspace / "benchmark_inputs").mkdir()
     (workspace / "scratch").mkdir()
     binary_directory = workspace / "bin"
     binary_directory.mkdir()
-    client = binary_directory / "liberoctl"
-    shutil.copy2(source_root / "scripts" / "liberoctl.py", client)
-    client.chmod(0o755)
+    if control_transport == "cli":
+        client = binary_directory / "liberoctl"
+        shutil.copy2(source_root / "scripts" / "liberoctl.py", client)
+        client.chmod(0o755)
+    else:
+        mcp_server = binary_directory / "libero_mcp_server"
+        shutil.copy2(source_root / "scripts" / "libero_mcp_server.py", mcp_server)
+        mcp_server.chmod(0o755)
     (workspace / "TASK_PROMPT.txt").write_text(prompt, encoding="utf-8")
     _write_json_atomic(
         workspace / ".libero" / "episode.json",
@@ -562,12 +682,13 @@ def _prepare_workspace(
             "schema_version": "libero.agent_workspace.v1",
             "run_id": run_id,
             "episode_resumable": False,
-            "operations": [
-                "start",
-                action_interface.wire_command,
-                "finish",
-            ],
+            "operations": (
+                list(MCP_TOOL_NAMES)
+                if control_transport == "mcp"
+                else ["start", action_interface.wire_command, "finish"]
+            ),
             "action_interface": action_interface.value,
+            "control_transport": control_transport,
             "max_native_osc_micro_steps_per_submission": (
                 MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
                 if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE

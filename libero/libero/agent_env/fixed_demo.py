@@ -21,6 +21,10 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .annotation_contract import (
+    TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
+    validate_task_entity_mapping,
+)
 from .artifacts import write_public_observation
 from .profiles import (
     COORDINATE_CONVENTION_FIELDS,
@@ -32,12 +36,11 @@ from .profiles import (
 )
 
 
-P4_MASTER_SCHEMA_VERSION = "libero.fixed_demo_p4_master.v1"
-FIXED_DEMO_BUNDLE_SCHEMA_VERSION = "libero.fixed_demo_bundle.v1"
+P4_MASTER_SCHEMA_VERSION = "libero.fixed_demo_p4_master.v2"
+FIXED_DEMO_BUNDLE_SCHEMA_VERSION = "libero.fixed_demo_bundle.v2"
 SOURCE_ACTION_SCHEMA_VERSION = "libero.normalized_osc_pose_action.v1"
 MAX_CONTACT_SHEET_FRAMES = 12
 CAMERA_NAMES = ("head", "wrist")
-PUBLIC_ROLES = ("manipulated_object", "goal_fixture")
 
 
 class FixedDemoError(ValueError):
@@ -643,11 +646,12 @@ def _project_materialized_frame(
             _copy_referenced_file(
                 source_root, destination_root, camera_annotations["overlay_file"]
             )
-            for role in PUBLIC_ROLES:
+            task_entities = camera_annotations["task_entities"]
+            for entity_id in validate_task_entity_mapping(task_entities):
                 _copy_referenced_file(
                     source_root,
                     destination_root,
-                    camera_annotations[role]["mask_file"],
+                    task_entities[entity_id]["mask_file"],
                 )
     _write_json(destination_root / "observation.json", projected)
     _validate_materialized_observation(
@@ -684,7 +688,7 @@ def _validate_materialized_observation(
         raise FixedDemoError("materialized observation fields do not match the profile")
     frame_id = f"frame_{expected_frame_index:06d}"
     if (
-        observation["schema_version"] != "libero.agent_observation.v1"
+        observation["schema_version"] != "libero.agent_observation.v2"
         or observation["observation_id"] != frame_id
         or observation["frame_index"] != expected_frame_index
         or observation["profile"] != expected_profile.public_name
@@ -729,25 +733,37 @@ def _validate_materialized_observation(
     if "annotations" in observation:
         annotations = observation["annotations"]
         if (
-            set(annotations) != {"schedule", "cameras"}
+            set(annotations) != {"schema_version", "schedule", "cameras"}
+            or annotations["schema_version"]
+            != TASK_ENTITY_ANNOTATION_SCHEMA_VERSION
             or annotations["schedule"] != "initial_observation_only"
             or set(annotations["cameras"]) != set(CAMERA_NAMES)
         ):
             raise FixedDemoError("materialized annotation metadata is invalid")
+        expected_entity_ids: tuple[str, ...] | None = None
         for camera_name in CAMERA_NAMES:
             camera_annotations = annotations["cameras"][camera_name]
-            if set(camera_annotations) != set(PUBLIC_ROLES) | {"overlay_file"}:
-                raise FixedDemoError("materialized annotation roles are invalid")
+            if set(camera_annotations) != {"task_entities", "overlay_file"}:
+                raise FixedDemoError("materialized task-entity fields are invalid")
             _inside(frame_root, camera_annotations["overlay_file"], "annotation overlay")
-            for role in PUBLIC_ROLES:
-                if set(camera_annotations[role]) != {
+            task_entities = camera_annotations["task_entities"]
+            try:
+                entity_ids = validate_task_entity_mapping(task_entities)
+            except ValueError as exc:
+                raise FixedDemoError(str(exc)) from exc
+            if expected_entity_ids is None:
+                expected_entity_ids = entity_ids
+            elif entity_ids != expected_entity_ids:
+                raise FixedDemoError("task entities differ between cameras")
+            for entity_id in entity_ids:
+                if set(task_entities[entity_id]) != {
                     "visible",
                     "visible_pixel_count",
                     "bbox_xyxy",
                     "mask_file",
                 }:
                     raise FixedDemoError("materialized annotation fields are invalid")
-                _inside(frame_root, camera_annotations[role]["mask_file"], "mask")
+                _inside(frame_root, task_entities[entity_id]["mask_file"], "mask")
     return observation
 
 

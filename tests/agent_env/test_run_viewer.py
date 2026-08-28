@@ -9,6 +9,7 @@ import pytest
 from libero.libero.agent_env.run_viewer import (
     RunRepository,
     ViewerDataError,
+    _mcp_robot_command,
     _robot_command,
 )
 
@@ -46,6 +47,20 @@ def test_robot_command_normalizes_legacy_and_ab_interfaces(
     shell_command, wire_command
 ):
     assert _robot_command(shell_command) == wire_command
+
+
+@pytest.mark.parametrize(
+    "item, wire_command",
+    (
+        ({"server": "libero", "tool": "start_episode"}, "start"),
+        ({"server_name": "libero", "tool_name": "osc_sequence"}, "osc_sequence"),
+        ({"server": "libero", "name": "finish_episode"}, "finish"),
+        ({"name": "mcp__libero__osc_sequence"}, "osc_sequence"),
+        ({"server": "another", "tool": "start_episode"}, None),
+    ),
+)
+def test_mcp_robot_command_only_accepts_libero_server(item, wire_command):
+    assert _mcp_robot_command(item) == wire_command
 
 
 def _make_run(tmp_path: Path) -> tuple[RunRepository, Path, Path]:
@@ -216,6 +231,56 @@ def test_viewer_aligns_codex_session_with_actions(tmp_path: Path) -> None:
     assert [step["command"] for step in detail["steps"]] == ["start", "osc_step"]
     assert detail["steps"][1]["output_observation"]["observation_id"] == "obs_000001"
     assert detail["summary"]["task_instruction"] == "Pick up the object."
+
+
+def test_viewer_aligns_libero_mcp_calls_with_actions(tmp_path: Path) -> None:
+    _repository, run, _workspace = _make_run(tmp_path)
+    records = [
+        json.loads(line)
+        for line in (run / "codex_session.jsonl").read_text().splitlines()
+    ]
+    for record in records:
+        payload = record.get("payload", {})
+        item = payload.get("item", {}) if isinstance(payload, dict) else {}
+        if item.get("id") == "command-1":
+            payload["item"] = {
+                "type": "McpToolCall",
+                "id": "mcp-1",
+                "server": "libero",
+                "tool": "start_episode",
+                "arguments": {},
+                "status": "completed",
+            }
+        elif item.get("id") == "command-2":
+            payload["item"] = {
+                "type": "McpToolCall",
+                "id": "mcp-2",
+                "server": "libero",
+                "tool": "osc_sequence",
+                "arguments": {"actions": [[0, 0, 0, 0, 0, 0, -1]]},
+                "status": "completed",
+            }
+    _write_jsonl(run / "codex_session.jsonl", records)
+    actions = [
+        json.loads(line) for line in (run / "actions.jsonl").read_text().splitlines()
+    ]
+    actions[1]["request"] = {
+        "command": "osc_sequence",
+        "actions": [[0, 0, 0, 0, 0, 0, -1]],
+    }
+    _write_jsonl(run / "actions.jsonl", actions)
+
+    detail = RunRepository(run.parent).detail("example")
+
+    assert detail["alignment"] == {
+        "action_records": 2,
+        "session_robot_commands": 2,
+        "matched_robot_commands": 2,
+    }
+    assert detail["steps"][0]["agent_activity"][-1]["kind"] == "mcp_tool_call"
+    assert detail["steps"][1]["agent_activity"][-1]["title"] == (
+        "libero.osc_sequence"
+    )
 
 
 def test_current_observation_image_view_maps_to_historical_frame(tmp_path: Path) -> None:

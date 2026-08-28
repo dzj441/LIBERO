@@ -13,6 +13,10 @@ from robosuite.utils.camera_utils import (
     get_real_depth_map,
 )
 
+from .annotation_contract import (
+    TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
+    task_entity_id,
+)
 from .control import matrix_to_quaternion_xyzw, quaternion_xyzw_to_matrix
 
 
@@ -23,65 +27,54 @@ CAMERA_SOURCES = {
 
 
 @dataclass(frozen=True)
-class AnnotationRoles:
-    """Host-private instance names used to produce public semantic roles."""
+class TaskEntitySelection:
+    """Host-private LIBERO instances selected for anonymous public masks."""
 
-    manipulated_object: str
-    goal_fixture: str
+    instance_names: tuple[str, ...]
 
+    def __post_init__(self) -> None:
+        normalized = tuple(str(name) for name in self.instance_names)
+        if not normalized:
+            raise ValueError("at least one task entity is required")
+        if any(not name for name in normalized):
+            raise ValueError("task-entity instance names must be non-empty")
+        if len(set(normalized)) != len(normalized):
+            raise ValueError("task-entity instance names must be unique")
+        object.__setattr__(self, "instance_names", normalized)
 
-def infer_annotation_roles(parsed_problem: Mapping[str, Any]) -> AnnotationRoles:
-    """Infer pick/place annotation roles, failing closed when ambiguous."""
-
-    object_instances = {
-        instance
-        for instances in parsed_problem.get("objects", {}).values()
-        for instance in instances
-    }
-    fixture_instances = {
-        instance
-        for instances in parsed_problem.get("fixtures", {}).values()
-        for instance in instances
-    }
-    known_instances = object_instances | fixture_instances
-    regions = parsed_problem.get("regions", {})
-    goals = parsed_problem.get("goal_state", [])
-
-    manipulated: str | None = None
-    goal_fixture: str | None = None
-    for goal in goals:
-        if len(goal) < 2:
-            continue
-        if manipulated is None and goal[1] in object_instances:
-            manipulated = goal[1]
-        for argument in goal[2:]:
-            candidate = argument if argument in known_instances else None
-            if argument in regions:
-                region_target = regions[argument].get("target")
-                if region_target in known_instances:
-                    candidate = region_target
-            if candidate is not None and candidate != manipulated:
-                goal_fixture = candidate
-                break
-        if manipulated is not None and goal_fixture is not None:
-            break
-
-    objects_of_interest = list(parsed_problem.get("obj_of_interest", []))
-    if manipulated is None and objects_of_interest:
-        candidate = objects_of_interest[0]
-        if candidate in object_instances:
-            manipulated = candidate
-    if goal_fixture is None:
-        candidates = [name for name in objects_of_interest if name != manipulated]
-        if len(candidates) == 1 and candidates[0] in known_instances:
-            goal_fixture = candidates[0]
-
-    if manipulated is None or goal_fixture is None:
-        raise ValueError(
-            "could not infer manipulated_object and goal_fixture from this task; "
-            "pass AnnotationRoles explicitly"
+    def anonymous_instances(self) -> tuple[tuple[str, str], ...]:
+        return tuple(
+            (task_entity_id(index), private_name)
+            for index, private_name in enumerate(self.instance_names)
         )
-    return AnnotationRoles(manipulated, goal_fixture)
+
+
+def infer_task_entities(parsed_problem: Mapping[str, Any]) -> TaskEntitySelection:
+    """Select every BDDL object of interest without assigning task roles."""
+
+    known_instances = {
+        instance
+        for group in ("objects", "fixtures")
+        for instances in parsed_problem.get(group, {}).values()
+        for instance in instances
+    }
+    regions = parsed_problem.get("regions", {})
+    selected: list[str] = []
+    for value in parsed_problem.get("obj_of_interest", []):
+        reference = str(value)
+        instance = reference
+        if reference in regions:
+            instance = str(regions[reference].get("target", ""))
+        if instance not in known_instances:
+            raise ValueError(
+                f"task entity {reference!r} does not resolve to a known object "
+                "or fixture instance"
+            )
+        if instance not in selected:
+            selected.append(instance)
+    if not selected:
+        raise ValueError("task has no valid obj_of_interest entries to annotate")
+    return TaskEntitySelection(tuple(selected))
 
 
 class MasterObservationCollector:
@@ -92,12 +85,12 @@ class MasterObservationCollector:
         env: Any,
         camera_height: int,
         camera_width: int,
-        annotation_roles: AnnotationRoles | None = None,
+        task_entities: TaskEntitySelection | None = None,
     ) -> None:
         self.env = env
         self.camera_height = int(camera_height)
         self.camera_width = int(camera_width)
-        self.annotation_roles = annotation_roles or infer_annotation_roles(
+        self.task_entities = task_entities or infer_task_entities(
             env.env.parsed_problem
         )
 
@@ -218,20 +211,25 @@ class MasterObservationCollector:
                 ),
             }
 
-        # Segmentation is consumed only to produce the two public semantic
-        # roles, and only for the initial frame.  Raw IDs and instance names do
-        # not enter the master frame.
+        # Segmentation is consumed only to produce anonymous task-entity masks
+        # on the initial frame. Raw IDs, private instance names, semantic class
+        # names, and manipulated/goal role bindings do not enter the master.
         if frame_index == 0:
             master["annotations"] = {
+                "schema_version": TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
                 "schedule": "initial_observation_only",
                 "cameras": {
-                    public_name: self._camera_annotations(raw_observation, source_name)
+                    public_name: {
+                        "task_entities": self._camera_task_entities(
+                            raw_observation, source_name
+                        )
+                    }
                     for public_name, source_name in CAMERA_SOURCES.items()
                 },
             }
         return master
 
-    def _camera_annotations(
+    def _camera_task_entities(
         self, raw_observation: Mapping[str, Any], source_name: str
     ) -> dict[str, Any]:
         key = f"{source_name}_segmentation_instance"
@@ -242,19 +240,15 @@ class MasterObservationCollector:
             segmentation = segmentation[..., 0]
 
         instance_names = list(self.env.env.model.instances_to_ids.keys())
-        role_instances = {
-            "manipulated_object": self.annotation_roles.manipulated_object,
-            "goal_fixture": self.annotation_roles.goal_fixture,
-        }
         annotations: dict[str, Any] = {}
-        for public_role, private_instance_name in role_instances.items():
+        for public_id, private_instance_name in self.task_entities.anonymous_instances():
             if private_instance_name not in instance_names:
                 raise ValueError(
                     f"annotation instance {private_instance_name!r} is absent from model"
                 )
             segmentation_id = instance_names.index(private_instance_name) + 1
             mask = np.ascontiguousarray(segmentation == segmentation_id)
-            annotations[public_role] = _annotation_from_mask(mask)
+            annotations[public_id] = _annotation_from_mask(mask)
         return annotations
 
 

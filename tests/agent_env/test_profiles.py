@@ -7,6 +7,9 @@ from libero.libero.agent_env.profiles import (
     ObservationProfile,
     project_public_observation,
 )
+from libero.libero.agent_env.annotation_contract import (
+    TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
+)
 
 
 def _master(frame_index=0):
@@ -61,11 +64,14 @@ def _master(frame_index=0):
         },
         "cameras": {"head": deepcopy(camera), "wrist": deepcopy(camera)},
         "annotations": {
+            "schema_version": TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
             "schedule": "initial_observation_only",
             "cameras": {
                 name: {
-                    "manipulated_object": deepcopy(annotation),
-                    "goal_fixture": deepcopy(annotation),
+                    "task_entities": {
+                        f"entity_{index:03d}": deepcopy(annotation)
+                        for index in range(3)
+                    }
                 }
                 for name in ("head", "wrist")
             },
@@ -107,6 +113,19 @@ def test_profile_modalities_are_strict_supersets():
 def test_annotations_are_initial_observation_only():
     public = project_public_observation(_master(frame_index=1), "level4")
     assert "annotations" not in public
+
+
+def test_task_entities_are_anonymous_variable_cardinality_and_camera_aligned():
+    public = project_public_observation(_master(), "level2")
+    annotations = public["annotations"]
+    assert annotations["schema_version"] == "libero.task_entities.v1"
+    for camera_name in ("head", "wrist"):
+        assert tuple(
+            annotations["cameras"][camera_name]["task_entities"]
+        ) == ("entity_000", "entity_001", "entity_002")
+    rendered = repr(annotations)
+    assert "manipulated_object" not in rendered
+    assert "goal_fixture" not in rendered
 
 
 def test_level2_initial_observation_fails_closed_without_annotations():

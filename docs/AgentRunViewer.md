@@ -2,7 +2,7 @@
 
 The read-only Viewer treats the persisted Codex session as the source of truth
 for Agent activity. It aligns completed session items with the corresponding
-`liberoctl` records in `actions.jsonl` and displays:
+CLI or MCP robot records in `actions.jsonl` and displays:
 
 - public reasoning summaries and Agent messages;
 - shell commands, exit status, stdout, and stderr;

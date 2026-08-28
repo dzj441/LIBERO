@@ -58,8 +58,8 @@ expert_demo/
 
 Every frame uses the same public observation schema as an online frame. P4
 contains head and wrist RGB, public kinematic state, dynamic proprioception,
-metric depth, and camera calibration. Anonymous manipulated-object and
-goal-fixture bbox/mask annotations appear only on `frame_000000`.
+metric depth, and camera calibration. Variable-cardinality anonymous
+`task_entities` bbox/mask annotations appear only on `frame_000000`.
 
 `trajectory.jsonl` publishes the recorded HDF5 action on every transition.
 It is explicitly described as a native normalized per-control-cycle
@@ -117,8 +117,8 @@ python scripts/launch_agent_episode.py \
   --fixed-demo-master outputs/replay/task_demo_0_p4_master
 ```
 
-The launcher validates the master, projects it into the new persistent
-workspace, and adds only this ICL notice to the task prompt:
+The launcher validates the master, projects it into the new ephemeral
+workspace, and adds an ICL notice to the task prompt beginning with:
 
 ```text
 A verified successful demonstration from a separate episode of the same task
@@ -130,18 +130,30 @@ With `--icl none`, no bundle and no ICL notice are provided.
 
 ## Validated assets
 
-The P4 replay and fixed-demo projection pipeline has been exercised on both a
-direct pick-and-place task and a sequential articulated task:
+The P4 replay and fixed-demo projection pipeline has been exercised on four
+assets:
 
 - `libero_object`, task 0: `pick up the alphabet soup and place it in the basket`;
-- `libero_goal`, task 3: `open the top drawer and put the bowl inside`.
+- `libero_goal`, task 3: `open the top drawer and put the bowl inside`;
+- `libero_90`, task 7: `KITCHEN_SCENE1_open_the_top_drawer_of_the_cabinet`;
+- `libero_90`, task 29: `KITCHEN_SCENE5_put_the_black_bowl_in_the_top_drawer_of_the_cabinet`.
 
 For the drawer-and-bowl task, `demo_0` replays to terminal success and remains
 successful for 12 consecutive control steps. Its evaluator-private P4 master
 contains 171 causal observation frames and 170 native OSC action transitions.
-The initial public annotations identify the bowl as `manipulated_object` and
-the complete cabinet as `goal_fixture`; private LIBERO instance names are not
-published in the projected bundle.
+The initial public annotations contain anonymous masks for the bowl and the
+complete cabinet. They do not identify which is manipulated or which is the
+goal; private instance names and drawer/handle subpart labels are not published.
+
+The two LIBERO-90 masters contain 178 frames / 177 transitions and 123 frames /
+122 transitions respectively. Both pass physical native-action replay and a
+terminal stability check. Task 7 exposes one anonymous whole-cabinet entity;
+task 29 exposes two anonymous entities for the bowl and complete cabinet.
+
+The v2 master and bundle schemas use `libero.task_entities.v1`. Existing v1
+masters that baked `manipulated_object` and `goal_fixture` file names are not
+accepted by the v2 validator and must be recaptured or deterministically
+migrated before use.
 
 ## Contact-sensitive waypoint diagnostic
 

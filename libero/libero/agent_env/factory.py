@@ -15,7 +15,7 @@ from libero.libero.envs import OffScreenRenderEnv
 
 from .control import OSCControlConfig
 from .environment import LiberoAgentEnv
-from .observation import AnnotationRoles
+from .observation import TaskEntitySelection
 from .profiles import ObservationProfile
 
 
@@ -28,7 +28,7 @@ def make_libero_agent_env(
     seed: int = 0,
     camera_height: int = 256,
     camera_width: int = 256,
-    annotation_roles: AnnotationRoles | None = None,
+    task_entities: TaskEntitySelection | None = None,
     control_config: OSCControlConfig | None = None,
     initial_settle_control_steps: int = 10,
     max_agent_steps: int | None = None,
@@ -104,7 +104,7 @@ def make_libero_agent_env(
         camera_width=camera_width,
         task_instruction=instruction,
         initial_state=np.asarray(init_states[init_state_id]),
-        annotation_roles=annotation_roles,
+        task_entities=task_entities,
         control_config=control_config,
         initial_settle_control_steps=initial_settle_control_steps,
         max_agent_steps=max_agent_steps,

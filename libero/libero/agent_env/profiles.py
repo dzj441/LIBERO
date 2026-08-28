@@ -10,6 +10,11 @@ from copy import deepcopy
 from enum import IntEnum
 from typing import Any, Mapping
 
+from .annotation_contract import (
+    TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
+    validate_task_entity_mapping,
+)
+
 
 COORDINATE_CONVENTION_FIELDS = (
     "robot_state_frame",
@@ -87,7 +92,7 @@ def profile_capabilities(profile: ObservationProfile | int | str) -> dict[str, A
         "head_rgb": True,
         "wrist_rgb": True,
         "kinematic_state": True,
-        "initial_bbox_and_mask": profile >= ObservationProfile.LEVEL2,
+        "initial_task_entity_bbox_and_mask": profile >= ObservationProfile.LEVEL2,
         "dynamic_proprioception": profile >= ObservationProfile.LEVEL3,
         "metric_depth": profile >= ObservationProfile.LEVEL4,
         "camera_calibration": profile >= ObservationProfile.LEVEL4,
@@ -124,7 +129,7 @@ def project_public_observation(
         raise KeyError(f"master observation missing required fields: {sorted(missing)}")
 
     public: dict[str, Any] = {
-        "schema_version": "libero.agent_observation.v1",
+        "schema_version": "libero.agent_observation.v2",
         "observation_id": str(master["observation_id"]),
         "frame_index": int(master["frame_index"]),
         "sim_time_s": float(master["sim_time_s"]),
@@ -167,17 +172,29 @@ def project_public_observation(
             raise KeyError("Level 2+ initial observation is missing annotations")
         annotations = master["annotations"]
         public["annotations"] = {
+            "schema_version": str(annotations["schema_version"]),
             "schedule": str(annotations["schedule"]),
             "cameras": {},
         }
+        if public["annotations"]["schema_version"] != TASK_ENTITY_ANNOTATION_SCHEMA_VERSION:
+            raise ValueError("unsupported task-entity annotation schema")
+        expected_entity_ids: tuple[str, ...] | None = None
         for camera_name in ("head", "wrist"):
-            public_roles: dict[str, Any] = {}
-            for role in ("manipulated_object", "goal_fixture"):
-                public_roles[role] = _copy_required_fields(
-                    annotations["cameras"][camera_name][role],
+            source_entities = annotations["cameras"][camera_name]["task_entities"]
+            entity_ids = validate_task_entity_mapping(source_entities)
+            if expected_entity_ids is None:
+                expected_entity_ids = entity_ids
+            elif entity_ids != expected_entity_ids:
+                raise ValueError("task-entity identifiers differ between cameras")
+            public_entities: dict[str, Any] = {}
+            for entity_id in entity_ids:
+                public_entities[entity_id] = _copy_required_fields(
+                    source_entities[entity_id],
                     ("visible", "visible_pixel_count", "bbox_xyxy", "mask"),
                 )
-            public["annotations"]["cameras"][camera_name] = public_roles
+            public["annotations"]["cameras"][camera_name] = {
+                "task_entities": public_entities
+            }
 
     return public
 

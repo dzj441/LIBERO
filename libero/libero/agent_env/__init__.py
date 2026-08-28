@@ -9,6 +9,7 @@ from .control import (
 )
 from .environment import LiberoAgentEnv
 from .factory import make_libero_agent_env
+from .observation import TaskEntitySelection, infer_task_entities
 from .profiles import ObservationProfile
 from .artifacts import replace_current_public_observation, write_public_observation
 from .fixed_demo import (
@@ -27,6 +28,8 @@ __all__ = [
     "MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION",
     "MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS",
     "P4ReplayMasterRecorder",
+    "TaskEntitySelection",
+    "infer_task_entities",
     "make_libero_agent_env",
     "project_fixed_demo_bundle",
     "replace_current_public_observation",

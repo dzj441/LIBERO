@@ -1,9 +1,11 @@
 import pytest
 
-from libero.libero.agent_env.observation import infer_annotation_roles
+from libero.libero.agent_env.observation import infer_task_entities
+from libero.libero.benchmark import get_benchmark
+from libero.libero.envs.bddl_utils import robosuite_parse_problem
 
 
-def test_infer_pick_place_roles_from_goal_region():
+def test_pick_place_selects_every_object_of_interest_without_roles():
     parsed = {
         "objects": {"soup": ["soup_1"], "basket": ["basket_1"]},
         "fixtures": {"floor": ["floor"]},
@@ -11,29 +13,15 @@ def test_infer_pick_place_roles_from_goal_region():
         "goal_state": [["in", "soup_1", "basket_1_inside"]],
         "obj_of_interest": ["soup_1", "basket_1"],
     }
-    roles = infer_annotation_roles(parsed)
-    assert roles.manipulated_object == "soup_1"
-    assert roles.goal_fixture == "basket_1"
+    entities = infer_task_entities(parsed)
+    assert entities.instance_names == ("soup_1", "basket_1")
+    assert entities.anonymous_instances() == (
+        ("entity_000", "soup_1"),
+        ("entity_001", "basket_1"),
+    )
 
 
-def test_infer_drawer_bowl_roles_from_cabinet_region():
-    parsed = {
-        "objects": {"akita_black_bowl": ["akita_black_bowl_1"]},
-        "fixtures": {"wooden_cabinet": ["wooden_cabinet_1"]},
-        "regions": {
-            "wooden_cabinet_1_top_region": {"target": "wooden_cabinet_1"}
-        },
-        "goal_state": [
-            ["in", "akita_black_bowl_1", "wooden_cabinet_1_top_region"]
-        ],
-        "obj_of_interest": ["akita_black_bowl_1", "wooden_cabinet_1"],
-    }
-    roles = infer_annotation_roles(parsed)
-    assert roles.manipulated_object == "akita_black_bowl_1"
-    assert roles.goal_fixture == "wooden_cabinet_1"
-
-
-def test_ambiguous_articulation_task_fails_closed():
+def test_single_fixture_articulation_task_needs_no_oracle_subpart_role():
     parsed = {
         "objects": {},
         "fixtures": {"cabinet": ["cabinet_1"]},
@@ -41,5 +29,53 @@ def test_ambiguous_articulation_task_fails_closed():
         "goal_state": [["open", "cabinet_1_top_region"]],
         "obj_of_interest": ["cabinet_1"],
     }
-    with pytest.raises(ValueError, match="pass AnnotationRoles explicitly"):
-        infer_annotation_roles(parsed)
+    entities = infer_task_entities(parsed)
+    assert entities.instance_names == ("cabinet_1",)
+    assert entities.anonymous_instances() == (("entity_000", "cabinet_1"),)
+
+
+def test_goal_region_resolves_only_to_its_host_fixture():
+    parsed = {
+        "objects": {"bowl": ["bowl_1"]},
+        "fixtures": {"cabinet": ["cabinet_1"]},
+        "regions": {"cabinet_1_top_region": {"target": "cabinet_1"}},
+        "obj_of_interest": ["bowl_1", "cabinet_1_top_region"],
+    }
+    entities = infer_task_entities(parsed)
+    assert entities.instance_names == ("bowl_1", "cabinet_1")
+
+
+def test_multiple_entities_preserve_bddl_order_and_remove_duplicates():
+    parsed = {
+        "objects": {"item": ["item_1", "item_2"]},
+        "fixtures": {"cabinet": ["cabinet_1"]},
+        "obj_of_interest": ["item_2", "cabinet_1", "item_1", "item_2"],
+    }
+    entities = infer_task_entities(parsed)
+    assert entities.instance_names == ("item_2", "cabinet_1", "item_1")
+
+
+def test_missing_or_unknown_task_entities_fail_closed():
+    with pytest.raises(ValueError, match="no valid obj_of_interest"):
+        infer_task_entities({"objects": {}, "fixtures": {}, "obj_of_interest": []})
+    with pytest.raises(ValueError, match="does not resolve to a known object"):
+        infer_task_entities(
+            {
+                "objects": {"item": ["item_1"]},
+                "fixtures": {},
+                "obj_of_interest": ["private_unknown"],
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "suite_name",
+    ("libero_spatial", "libero_object", "libero_goal", "libero_10", "libero_90"),
+)
+def test_every_shipped_task_has_a_supported_variable_entity_set(suite_name):
+    suite = get_benchmark(suite_name)()
+    counts = []
+    for task_index in range(suite.get_num_tasks()):
+        problem = robosuite_parse_problem(suite.get_task_bddl_file_path(task_index))
+        counts.append(len(infer_task_entities(problem).instance_names))
+    assert all(1 <= count <= 4 for count in counts)

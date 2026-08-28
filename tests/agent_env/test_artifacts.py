@@ -20,9 +20,11 @@ def test_materialized_level4_frame_uses_files_for_dense_arrays(tmp_path):
     depth = metadata["cameras"]["head"]["depth"]
     assert np.load(tmp_path / depth["metric_file"], allow_pickle=False).dtype == np.float32
     assert (tmp_path / depth["preview_file"]).is_file()
-    role = metadata["annotations"]["cameras"]["head"]["manipulated_object"]
-    assert (tmp_path / role["mask_file"]).is_file()
-    assert "mask" not in role
+    entity = metadata["annotations"]["cameras"]["head"]["task_entities"][
+        "entity_000"
+    ]
+    assert (tmp_path / entity["mask_file"]).is_file()
+    assert "mask" not in entity
 
 
 def test_materialized_level1_has_no_hidden_level4_files(tmp_path):
@@ -84,8 +86,9 @@ def test_materialized_profile_matrix_has_exact_file_surface(
         for camera in ("head", "wrist"):
             expected_files.update(
                 {
-                    f"annotations/{camera}/manipulated_object_mask.png",
-                    f"annotations/{camera}/goal_fixture_mask.png",
+                    f"annotations/{camera}/entity_000_mask.png",
+                    f"annotations/{camera}/entity_001_mask.png",
+                    f"annotations/{camera}/entity_002_mask.png",
                     f"annotations/{camera}/annotations_overlay.png",
                 }
             )

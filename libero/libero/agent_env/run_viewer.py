@@ -26,6 +26,11 @@ CURRENT_OBSERVATION_MARKERS = (
 ROBOT_COMMAND = re.compile(
     r"(?:^|\s)liberoctl\s+(start|step|osc-step|osc-sequence|finish)\b"
 )
+MCP_ROBOT_COMMANDS = {
+    "start_episode": "start",
+    "osc_sequence": "osc_sequence",
+    "finish_episode": "finish",
+}
 TEXT_LIMIT = 24_000
 COLLECTION_LIMIT = 200
 
@@ -278,6 +283,22 @@ def _robot_command(value: str) -> str | None:
     return match.group(1).replace("-", "_") if match else None
 
 
+def _mcp_robot_command(item: Mapping[str, Any]) -> str | None:
+    """Map only the workspace-local LIBERO MCP server onto wire commands."""
+
+    server = item.get("server") or item.get("server_name")
+    tool = item.get("tool") or item.get("tool_name") or item.get("name")
+    if not isinstance(tool, str):
+        return None
+    normalized_tool = tool.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+    if normalized_tool.startswith("mcp__libero__"):
+        normalized_tool = normalized_tool.removeprefix("mcp__libero__")
+        server = "libero"
+    if server != "libero":
+        return None
+    return MCP_ROBOT_COMMANDS.get(normalized_tool)
+
+
 def _session_origin(records: Iterable[Mapping[str, Any]]) -> datetime | None:
     for record in records:
         timestamp = _parse_time(record.get("timestamp"))
@@ -395,6 +416,16 @@ def _normalize_activity(
                 key: child
                 for key, child in item.items()
                 if key not in {"id", "type", "path", *HIDDEN_SESSION_FIELDS}
+            }
+        elif kind == "mcp_tool_call":
+            server = item.get("server") or item.get("server_name")
+            tool = item.get("tool") or item.get("tool_name") or item.get("name")
+            title = ".".join(str(value) for value in (server, tool) if value) or item_type
+            robot_command = _mcp_robot_command(item)
+            details = {
+                key: child
+                for key, child in item.items()
+                if key not in {"id", "type", *HIDDEN_SESSION_FIELDS}
             }
         elif item_type == "ContextCompaction":
             parts = ["The Codex context was compacted within this session."]
