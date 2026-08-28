@@ -53,13 +53,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--action-interface",
         choices=tuple(interface.value for interface in ActionInterface),
-        default=ActionInterface.METRIC_OSC_STEP.value,
+        default=ActionInterface.NATIVE_OSC_SEQUENCE.value,
         help="Mutually exclusive public robot-control condition",
     )
     parser.add_argument(
         "--control-transport",
         choices=CONTROL_TRANSPORTS,
-        default="cli",
+        default="mcp",
         help="Agent-facing adapter over the same Unix-socket episode service",
     )
     parser.add_argument("--run-id")

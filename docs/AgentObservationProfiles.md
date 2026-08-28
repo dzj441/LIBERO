@@ -269,9 +269,16 @@ socket via `LIBERO_CONTROL_SOCKET`. This is one saved, auditable Codex session,
 but its CLI process exits after
 the Agent's final message instead of waiting at an interactive input box. Hook
 trust and Codex's inner sandbox prompts are bypassed because deployment
-containment is evaluator-controlled. The CLI adapter exposes `start`, `finish`,
-and exactly one action operation selected for the run. The default metric
-condition is:
+containment is evaluator-controlled. The default Agent-facing condition is the
+MCP adapter with native OSC sequences. It exposes exactly three typed tools:
+
+```text
+start_episode
+osc_sequence(actions: 1..20 normalized 7D vectors)
+finish_episode
+```
+
+The optional CLI metric condition exposes:
 
 ```bash
 liberoctl start
@@ -279,19 +286,10 @@ liberoctl osc-step --position DX DY DZ --rotation RX RY RZ --gripper-delta-m DG
 liberoctl finish
 ```
 
-The native A/B condition replaces `osc-step` with:
+The optional CLI native-action condition replaces `osc-step` with:
 
 ```bash
 liberoctl osc-sequence --actions-file PATH
-```
-
-The MCP condition is a parallel STDIO adapter over the same Unix-socket
-service. It exposes exactly three typed tools:
-
-```text
-start_episode
-osc_sequence(actions: 1..20 normalized 7D vectors)
-finish_episode
 ```
 
 The MCP workspace contains no `liberoctl` executable, so the declared robot
@@ -333,17 +331,19 @@ python scripts/launch_agent_episode.py \
   --profile level4
 ```
 
-Select the native-action A/B condition with:
+The command above uses the default MCP + native OSC condition. Select the
+legacy-compatible CLI metric condition explicitly with:
 
 ```bash
 python scripts/launch_agent_episode.py \
   --suite libero_object \
   --task-id 0 \
   --profile level4 \
-  --action-interface native_osc_sequence
+  --action-interface metric_osc_step \
+  --control-transport cli
 ```
 
-Select the MCP adapter with:
+Select the CLI native-action condition with:
 
 ```bash
 python scripts/launch_agent_episode.py \
@@ -351,7 +351,7 @@ python scripts/launch_agent_episode.py \
   --task-id 0 \
   --profile level4 \
   --action-interface native_osc_sequence \
-  --control-transport mcp
+  --control-transport cli
 ```
 
 Codex starts the workspace-local server as a required STDIO MCP process using

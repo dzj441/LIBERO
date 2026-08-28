@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import sys
 
 from libero.libero.agent_env.control import ActionInterface
 from scripts.launch_agent_episode import (
@@ -8,7 +9,15 @@ from scripts.launch_agent_episode import (
     _prepare_workspace,
     build_codex_command,
     build_task_prompt,
+    parse_args,
 )
+
+
+def test_launcher_defaults_to_mcp_native_osc(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["launch_agent_episode.py"])
+    args = parse_args()
+    assert args.control_transport == "mcp"
+    assert args.action_interface == ActionInterface.NATIVE_OSC_SEQUENCE.value
 
 
 def test_prompt_is_nonstrategic_and_documents_delta_gripper_workflow():
