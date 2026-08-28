@@ -3,6 +3,8 @@ from pathlib import Path
 
 from libero.libero.agent_env.control import ActionInterface
 from scripts.launch_agent_episode import (
+    _allocate_workspace,
+    _archive_viewed_artifacts,
     _prepare_workspace,
     build_codex_command,
     build_task_prompt,
@@ -93,3 +95,61 @@ def test_codex_command_is_persistent_one_shot_and_noninteractive():
     assert "--ephemeral" not in command
     assert "--no-alt-screen" not in command
     assert command[-1] == "task prompt"
+
+
+def test_system_temp_workspace_is_random_and_left_for_system_cleanup(tmp_path):
+    workspace, ephemeral = _allocate_workspace(
+        canonical_root=tmp_path / "repo",
+        requested_root=tmp_path / "temporary_workspaces",
+        run_id="run-id-must-not-be-the-directory-name",
+        keep_workspace=False,
+    )
+
+    assert ephemeral is True
+    assert workspace.name.startswith("libero-agent-workspace-")
+    assert "run-id" not in workspace.name
+    assert workspace.is_dir()
+
+
+def test_archive_viewed_artifacts_skips_current_observation_and_keeps_scratch(
+    tmp_path,
+):
+    workspace = tmp_path / "libero-agent-workspace-example"
+    run = tmp_path / "run"
+    current = workspace / "benchmark_inputs/current_observation/head/rgb.png"
+    scratch = workspace / "scratch/crop.png"
+    current.parent.mkdir(parents=True)
+    scratch.parent.mkdir(parents=True)
+    current.write_bytes(b"current")
+    scratch.write_bytes(b"crop")
+    run.mkdir()
+    session = run / "codex_session.jsonl"
+    records = []
+    for ordinal, path in enumerate((current, scratch)):
+        records.append(
+            {
+                "timestamp": f"2026-01-01T00:00:0{ordinal}Z",
+                "ordinal": ordinal,
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {"type": "ImageView", "path": path.as_uri()},
+                },
+            }
+        )
+    session.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    manifest = _archive_viewed_artifacts(
+        session_path=session,
+        workspace=workspace,
+        run_directory=run,
+    )
+
+    by_path = {entry["source_path"]: entry for entry in manifest["artifacts"]}
+    assert by_path[current.as_uri()]["status"] == "historical_observation_archive"
+    scratch_entry = by_path[scratch.as_uri()]
+    assert scratch_entry["status"] == "archived"
+    assert (run / scratch_entry["archived_file"]).read_bytes() == b"crop"

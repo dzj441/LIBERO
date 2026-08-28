@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 import pytest
 
@@ -254,3 +255,141 @@ def test_artifact_endpoint_uses_normalized_allowlist(tmp_path: Path) -> None:
         repository.resolve_artifact("example", "workspace/secret.txt")
     with pytest.raises(ViewerDataError):
         repository.resolve_artifact("example", "../secret.txt")
+
+
+def test_session_coverage_accounts_for_hidden_and_visible_records(tmp_path: Path) -> None:
+    repository, _, _ = _make_run(tmp_path)
+
+    coverage = repository.detail("example")["session"]["coverage"]
+
+    assert coverage["public_trace_complete"] is True
+    assert coverage["viewer_complete"] is True
+    assert coverage["unsupported_types"] == {}
+    assert coverage["classification_counts"]["deliberately_hidden"] == 1
+    assert coverage["hidden_field_counts"]["raw_content"] == 1
+    assert coverage["artifact_coverage"] == {
+        "image_view_events": 1,
+        "image_view_artifacts_available": 1,
+        "image_view_artifacts_missing": 0,
+    }
+
+
+def test_lifecycle_runtime_and_injected_context_are_visible(tmp_path: Path) -> None:
+    _repository, run, workspace = _make_run(tmp_path)
+    session_path = run / "codex_session.jsonl"
+    records = [json.loads(line) for line in session_path.read_text().splitlines()]
+    records.extend(
+        [
+            {
+                "timestamp": "2026-01-01T00:00:06Z",
+                "ordinal": 7,
+                "type": "turn_context",
+                "payload": {
+                    "model": "gpt-test",
+                    "effort": "high",
+                    "cwd": str(workspace),
+                    "sandbox_policy": {"type": "danger-full-access"},
+                    "approval_policy": "never",
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:00:06.1Z",
+                "ordinal": 8,
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "<environment_context><cwd>/tmp</cwd></environment_context>",
+                        }
+                    ],
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:00:06.2Z",
+                "ordinal": 9,
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_started",
+                    "model_context_window": 1234,
+                },
+            },
+            {
+                "timestamp": "2026-01-01T00:00:06.3Z",
+                "ordinal": 10,
+                "type": "event_msg",
+                "payload": {
+                    "type": "turn_aborted",
+                    "reason": "interrupted",
+                },
+            },
+        ]
+    )
+    _write_jsonl(session_path, records)
+
+    detail = RunRepository(run.parent).detail("example")
+    session = detail["session"]
+
+    assert session["task_user_messages"] == ["Pick up the object."]
+    assert session["runtime_user_messages"] == [
+        "<environment_context><cwd>/tmp</cwd></environment_context>"
+    ]
+    assert session["runtime_settings"]["model"] == "gpt-test"
+    assert session["runtime_settings"]["reasoning_effort"] == "high"
+    assert session["runtime_settings"]["context_window"] == 1234
+    assert [item["kind"] for item in detail["tail_activity"]][-2:] == [
+        "task_started",
+        "turn_aborted",
+    ]
+
+
+def test_archived_viewed_image_survives_deleted_workspace(tmp_path: Path) -> None:
+    _repository, run, workspace = _make_run(tmp_path)
+    scratch = workspace / "scratch" / "crop.png"
+    scratch.parent.mkdir()
+    scratch.write_bytes(b"derived-image")
+    records = [
+        json.loads(line)
+        for line in (run / "codex_session.jsonl").read_text().splitlines()
+    ]
+    records.insert(
+        -1,
+        _event(
+            "2026-01-01T00:00:04.5Z",
+            99,
+            {"type": "ImageView", "id": "image-derived", "path": scratch.as_uri()},
+        ),
+    )
+    _write_jsonl(run / "codex_session.jsonl", records)
+    archived = run / "viewed_artifacts" / "crop.png"
+    archived.parent.mkdir()
+    shutil.copy2(scratch, archived)
+    _write_json(
+        run / "viewed_artifacts_manifest.json",
+        {
+            "artifacts": [
+                {
+                    "source_path": scratch.as_uri(),
+                    "source_absolute_path": str(scratch.resolve()),
+                    "archived_file": "viewed_artifacts/crop.png",
+                    "status": "archived",
+                }
+            ]
+        },
+    )
+    shutil.rmtree(workspace)
+
+    repository = RunRepository(run.parent)
+    detail = repository.detail("example")
+    derived = [
+        item
+        for step in detail["steps"]
+        for item in step["agent_activity"]
+        if item.get("title") == scratch.as_uri()
+    ]
+
+    assert len(derived) == 1
+    assert derived[0]["artifact"] == "run/viewed_artifacts/crop.png"
+    assert repository.resolve_artifact("example", derived[0]["artifact"]) == archived

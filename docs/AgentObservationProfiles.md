@@ -224,11 +224,11 @@ Dense metric depth is kept in NPY rather than expanded into JSON. The preview
 is for visual inspection; geometry calculations must use `depth_m.npy`.
 Level 1 output physically contains no depth or annotation files.
 
-## Persistent workspace and Unix-socket runtime
+## Ephemeral workspace and Unix-socket runtime
 
 The official coding-agent runtime is:
 
-> persistent Agent workspace + background LIBERO server + Unix socket + a
+> isolated Agent workspace + background LIBERO server + Unix socket + a
 > three-operation `liberoctl` + current-only disk observation.
 
 One invocation of `scripts/launch_agent_episode.py` creates both sides:
@@ -243,8 +243,12 @@ LIBERO/agent_runs/<run_id>/                 evaluator-private
   run_manifest.json
   server_ready.json                         verified before Codex starts
   codex_session.jsonl                       when a matching session is found
+  agent_prompt.txt
+  agent_workspace_contract.json
+  viewed_artifacts/                         files explicitly opened by ImageView
+  viewed_artifacts_manifest.json
 
-agent_workspaces/libero/<run_id>/           persistent Codex cwd
+/tmp/libero-agent-workspace-<random>/        ephemeral Codex cwd
   TASK_PROMPT.txt
   .libero/control.sock                      live episode only
   .libero/episode.json
@@ -259,10 +263,10 @@ preserved, so evaluator configuration, skills, plugins, and the canonical
 Codex session history remain available. A matching session log is copied into
 the private run directory after Codex exits for convenient audit.
 
-The launcher starts `codex exec` with the persistent workspace as its real
+The launcher starts `codex exec` with the isolated workspace as its real
 `cwd`, prepends `workspace/bin` to `PATH`, and supplies the workspace-local
-socket via `LIBERO_CONTROL_SOCKET`. This is one persistent, auditable Codex
-session rather than an ephemeral invocation, but its CLI process exits after
+socket via `LIBERO_CONTROL_SOCKET`. This is one saved, auditable Codex session,
+but its CLI process exits after
 the Agent's final message instead of waiting at an interactive input box. Hook
 trust and Codex's inner sandbox prompts are bypassed because deployment
 containment is evaluator-controlled. The public client exposes `start`,
@@ -356,11 +360,14 @@ Codex exit immediately terminates an unfinished server and records the run as
 cleanly. The one-shot Codex process then returns after its final response. The
 Unix socket is removed in both cases.
 
-An active embodied episode is deliberately not resumable. The persistent
-workspace and copied Codex/session artifacts remain available for audit, but a
-later `codex resume` must not reconnect to or continue that simulator episode.
-This avoids pretending that a resumed model context necessarily preserves the
-exact visual/tool state that preceded interruption.
+An active embodied episode is deliberately not resumable. After Codex exits,
+the launcher copies the normal `$CODEX_HOME` session, prompt, public workspace
+contract, and every non-observation file explicitly opened through `ImageView`
+into the private run. Per-step current-observation views are reconstructed from
+`private_observations/`. The inactive random workspace is left on the system
+temporary disk for the operating system to reclaim; the launcher does not
+delete it. A later `codex resume` must not reconnect to or continue that
+simulator episode. `--keep-workspace` selects a stable named debug cwd instead.
 
 `scripts/run_agent_env.py` remains a developer-only stdin JSONL transport for
 local diagnostics. It uses the same service and current-only serializer but is

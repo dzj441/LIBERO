@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a persistent workspace and run one Codex-controlled LIBERO episode."""
+"""Run one Codex-controlled LIBERO episode in an isolated workspace."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 from typing import Any, Mapping
+from urllib.parse import unquote, urlsplit
 
 from libero.libero.benchmark import get_benchmark
 from libero.libero.agent_env.control import (
@@ -52,7 +53,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--run-id")
     parser.add_argument("--run-root", type=Path)
-    parser.add_argument("--workspace-root", type=Path)
+    parser.add_argument(
+        "--workspace-root",
+        type=Path,
+        help="Parent for the isolated workspace (defaults to the system temp disk)",
+    )
+    parser.add_argument(
+        "--keep-workspace",
+        action="store_true",
+        help="Use a named persistent debug workspace instead of a random temp path",
+    )
     parser.add_argument("--nvidia-runtime-root", type=Path)
     parser.add_argument("--server-ready-timeout-s", type=float, default=180.0)
     parser.add_argument("--codex-bin", default="codex")
@@ -91,24 +101,23 @@ def main() -> int:
     source_root = Path(__file__).resolve().parents[1]
     canonical_root = _canonical_repository_root(source_root)
     run_root = (args.run_root or canonical_root / "agent_runs").resolve()
-    workspace_root = (
-        args.workspace_root
-        or canonical_root.parent / "agent_workspaces" / "libero"
-    ).resolve()
     nvidia_runtime_root = (
         args.nvidia_runtime_root or canonical_root / "runtime" / "nvidia"
     ).resolve()
     run_id = args.run_id or _new_run_id()
     _validate_run_id(run_id)
     run_directory = run_root / run_id
-    workspace = workspace_root / run_id
     _create_new_directory(run_directory)
     try:
-        _create_new_directory(workspace)
+        workspace, system_temp_workspace = _allocate_workspace(
+            canonical_root=canonical_root,
+            requested_root=args.workspace_root,
+            run_id=run_id,
+            keep_workspace=args.keep_workspace,
+        )
     except Exception:
         run_directory.rmdir()
         raise
-
     task_instruction = _task_instruction(args.suite, args.task_id)
     prompt = build_task_prompt(
         task_instruction,
@@ -122,6 +131,11 @@ def main() -> int:
         run_id,
         icl_condition=args.icl,
         action_interface=action_interface,
+    )
+    shutil.copy2(workspace / "TASK_PROMPT.txt", run_directory / "agent_prompt.txt")
+    shutil.copy2(
+        workspace / ".libero" / "episode.json",
+        run_directory / "agent_workspace_contract.json",
     )
     icl_projection_receipt = None
     if args.icl == "fixed_demo":
@@ -216,6 +230,13 @@ def main() -> int:
         ),
         "source_worktree_dirty": bool(source_status),
         "workspace": os.fspath(workspace),
+        "workspace_lifecycle": (
+            "system_temporary" if system_temp_workspace else "persistent_debug"
+        ),
+        "workspace_retained": True,
+        "workspace_cleanup_owner": (
+            "operating_system" if system_temp_workspace else "evaluator"
+        ),
         "episode_resumable": False,
         "codex_execution_mode": "exec",
         "transport": "unix_socket",
@@ -281,6 +302,7 @@ def main() -> int:
     codex_return_code: int | None = None
     server_return_code: int | None = None
     infrastructure_error: str | None = None
+    session_archive_error: str | None = None
     caught_exception: BaseException | None = None
     try:
         server_process = subprocess.Popen(
@@ -369,13 +391,25 @@ def main() -> int:
         )
     finally:
         server_log.close()
-        _copy_codex_session(
-            workspace=workspace,
-            run_directory=run_directory,
-            known_sessions=known_sessions,
-            started_at=codex_started_at,
-        )
-
+        try:
+            archived_session = _copy_codex_session(
+                workspace=workspace,
+                run_directory=run_directory,
+                known_sessions=known_sessions,
+                started_at=codex_started_at,
+            )
+            if archived_session is not None:
+                _archive_viewed_artifacts(
+                    session_path=archived_session,
+                    workspace=workspace,
+                    run_directory=run_directory,
+                )
+        except BaseException as exc:
+            session_archive_error = f"{type(exc).__name__}: {exc}"
+            if infrastructure_error is None:
+                infrastructure_error = f"session archival failed: {session_archive_error}"
+            if caught_exception is None:
+                caught_exception = exc
     result_path = run_directory / "result.json"
     result = _read_json(result_path)
     if caught_exception is not None and not result:
@@ -393,6 +427,7 @@ def main() -> int:
             "server_exit_code": server_return_code,
             "launcher_finished_at": _utc_now(),
             "infrastructure_error": infrastructure_error,
+            "session_archive_error": session_archive_error,
         }
     )
     _write_json_atomic(result_path, result)
@@ -646,6 +681,33 @@ def _create_new_directory(path: Path) -> None:
     path.mkdir()
 
 
+def _allocate_workspace(
+    *,
+    canonical_root: Path,
+    requested_root: Path | None,
+    run_id: str,
+    keep_workspace: bool,
+) -> tuple[Path, bool]:
+    if keep_workspace:
+        root = (
+            requested_root
+            or canonical_root.parent / "agent_workspaces" / "libero"
+        ).expanduser().resolve()
+        workspace = root / run_id
+        _create_new_directory(workspace)
+        return workspace, False
+    parent = requested_root.expanduser().resolve() if requested_root else None
+    if parent is not None:
+        parent.mkdir(parents=True, exist_ok=True)
+    workspace = Path(
+        tempfile.mkdtemp(
+            prefix="libero-agent-workspace-",
+            dir=os.fspath(parent) if parent is not None else None,
+        )
+    ).resolve()
+    return workspace, True
+
+
 def _terminate_process(process: subprocess.Popen[Any], timeout_s: float = 10.0) -> None:
     if process.poll() is not None:
         return
@@ -688,7 +750,7 @@ def _copy_codex_session(
     run_directory: Path,
     known_sessions: set[Path],
     started_at: float,
-) -> None:
+) -> Path | None:
     candidates = []
     for path in _session_files():
         try:
@@ -699,7 +761,7 @@ def _copy_codex_session(
         except (OSError, ValueError, json.JSONDecodeError):
             continue
     if not candidates:
-        return
+        return None
     _modified, source, metadata = max(candidates, key=lambda item: item[0])
     shutil.copy2(source, run_directory / "codex_session.jsonl")
     _write_json_atomic(
@@ -712,6 +774,141 @@ def _copy_codex_session(
             "episode_resumable": False,
         },
     )
+    return run_directory / "codex_session.jsonl"
+
+
+def _session_image_view_paths(session_path: Path) -> list[str]:
+    paths: list[str] = []
+    try:
+        lines = session_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return paths
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            if index == len(lines) - 1:
+                break
+            continue
+        payload = record.get("payload")
+        if (
+            record.get("type") != "event_msg"
+            or not isinstance(payload, dict)
+            or payload.get("type") != "item_completed"
+        ):
+            continue
+        item = payload.get("item")
+        if not isinstance(item, dict) or item.get("type") != "ImageView":
+            continue
+        path = item.get("path")
+        if isinstance(path, str) and path and path not in paths:
+            paths.append(path)
+    return paths
+
+
+def _image_view_file(value: str, *, base: Path | None = None) -> Path | None:
+    parsed = urlsplit(value)
+    if parsed.scheme == "file":
+        return Path(unquote(parsed.path)).resolve()
+    if not parsed.scheme:
+        path = Path(value).expanduser()
+        if not path.is_absolute() and base is not None:
+            path = base / path
+        return path.resolve()
+    return None
+
+
+def _is_current_observation_path(source: Path, workspace: Path) -> bool:
+    try:
+        relative = source.relative_to(workspace)
+    except ValueError:
+        return False
+    markers = (
+        Path("benchmark_inputs/current_observation"),
+        Path("benchmark_inputs/live_observation/current"),
+    )
+    return any(
+        relative.parts[: len(marker.parts)] == marker.parts for marker in markers
+    )
+
+
+def _archive_viewed_artifacts(
+    *, session_path: Path, workspace: Path, run_directory: Path
+) -> dict[str, Any]:
+    """Preserve files explicitly viewed by Codex before workspace cleanup."""
+
+    archive_root = run_directory / "viewed_artifacts"
+    entries: list[dict[str, Any]] = []
+    archived_by_digest: dict[tuple[str, str], Path] = {}
+    for source_value in _session_image_view_paths(session_path):
+        source = _image_view_file(source_value, base=workspace)
+        entry: dict[str, Any] = {
+            "source_path": source_value,
+            "source_absolute_path": os.fspath(source) if source is not None else None,
+        }
+        if source is None:
+            entry["status"] = "unsupported_uri"
+            entries.append(entry)
+            continue
+        try:
+            relative = source.relative_to(workspace)
+        except ValueError:
+            relative = None
+        if relative is not None:
+            entry["workspace_relative_path"] = relative.as_posix()
+        if _is_current_observation_path(source, workspace):
+            entry["status"] = "historical_observation_archive"
+            entries.append(entry)
+            continue
+        try:
+            source.relative_to(run_directory)
+        except ValueError:
+            inside_run = False
+        else:
+            inside_run = True
+        if inside_run:
+            entry["status"] = "already_in_private_run"
+            entry["archived_file"] = source.relative_to(run_directory).as_posix()
+            entries.append(entry)
+            continue
+        if not source.is_file():
+            entry["status"] = "source_missing_at_archive_time"
+            entries.append(entry)
+            continue
+        digest = file_sha256(source)
+        suffix = source.suffix.lower()
+        if not suffix or len(suffix) > 12 or not suffix[1:].isalnum():
+            suffix = ".bin"
+        key = (digest, suffix)
+        destination = archived_by_digest.get(key)
+        if destination is None:
+            archive_root.mkdir(parents=True, exist_ok=True)
+            destination = archive_root / f"{digest}{suffix}"
+            if not destination.is_file():
+                shutil.copy2(source, destination)
+            archived_by_digest[key] = destination
+        entry.update(
+            {
+                "status": "archived",
+                "archived_file": destination.relative_to(run_directory).as_posix(),
+                "sha256": digest,
+                "size_bytes": destination.stat().st_size,
+            }
+        )
+        entries.append(entry)
+    manifest = {
+        "schema_version": "libero.viewed_artifacts_archive.v1",
+        "created_at": _utc_now(),
+        "artifact_count": sum(
+            entry.get("status") in {"archived", "already_in_private_run"}
+            for entry in entries
+        ),
+        "artifacts": entries,
+    }
+    _write_json_atomic(run_directory / "viewed_artifacts_manifest.json", manifest)
+    return manifest
 
 
 def _session_metadata(path: Path) -> Mapping[str, Any]:

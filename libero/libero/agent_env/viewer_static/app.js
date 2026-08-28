@@ -21,8 +21,11 @@ const elements = {
   noVideo: document.querySelector("#no-video"),
   sessionOverview: document.querySelector("#session-overview"),
   taskPrompt: document.querySelector("#task-prompt"),
+  runtimeUserContext: document.querySelector("#runtime-user-context"),
   baseInstructions: document.querySelector("#base-instructions"),
   developerMessages: document.querySelector("#developer-messages"),
+  runtimeSettings: document.querySelector("#runtime-settings"),
+  sessionCoverage: document.querySelector("#session-coverage"),
   timeline: document.querySelector("#timeline"),
   previousStep: document.querySelector("#previous-step"),
   nextStep: document.querySelector("#next-step"),
@@ -134,6 +137,10 @@ function renderRunHeader(detail) {
     summaryItem("Tokens", formatInteger(session.token_usage?.total_tokens)),
     summaryItem("Duration", formatSeconds((session.completion?.duration_ms || 0) / 1000)),
     summaryItem(
+      "Viewer coverage",
+      session.coverage?.viewer_complete ? "complete" : "warning",
+    ),
+    summaryItem(
       "Alignment",
       `${detail.alignment?.matched_robot_commands ?? 0}/${detail.alignment?.action_records ?? 0}`,
     ),
@@ -162,6 +169,8 @@ function renderSession(detail) {
     ["cwd", session.cwd],
     ["provider", session.model_provider],
     ["origin", session.originator],
+    ["source", session.source],
+    ["thread source", session.thread_source],
     ["resumable", String(session.episode_resumable)],
   ];
   for (const [name, value] of entries) {
@@ -172,10 +181,15 @@ function renderSession(detail) {
     facts.append(item);
   }
   elements.sessionOverview.replaceChildren(facts);
-  elements.taskPrompt.textContent = (session.user_messages || []).join("\n\n---\n\n") || "Unavailable";
+  elements.taskPrompt.textContent =
+    (session.task_user_messages || []).join("\n\n---\n\n") || "Unavailable";
+  elements.runtimeUserContext.textContent =
+    (session.runtime_user_messages || []).join("\n\n---\n\n") || "None recorded";
   elements.baseInstructions.textContent = session.base_instructions || "Unavailable";
   elements.developerMessages.textContent =
     (session.developer_messages || []).join("\n\n---\n\n") || "Unavailable";
+  elements.runtimeSettings.textContent = json(session.runtime_settings);
+  elements.sessionCoverage.textContent = json(session.coverage);
 }
 
 function renderTimeline() {

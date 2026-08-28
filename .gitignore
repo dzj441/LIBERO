@@ -24,3 +24,5 @@ libero.egg-info/
 
 # Machine-local link to the shared, versioned NVIDIA userspace driver bundles.
 /runtime/nvidia
+
+temp/

@@ -7,6 +7,7 @@ import math
 import mimetypes
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http import HTTPStatus
@@ -18,6 +19,10 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 STATIC_FILENAMES = frozenset({"index.html", "app.js", "styles.css"})
 OBSERVATION_ID = re.compile(r"obs_\d{6}")
+CURRENT_OBSERVATION_MARKERS = (
+    Path("benchmark_inputs/current_observation"),
+    Path("benchmark_inputs/live_observation/current"),
+)
 ROBOT_COMMAND = re.compile(
     r"(?:^|\s)liberoctl\s+(start|step|osc-step|osc-sequence|finish)\b"
 )
@@ -37,7 +42,18 @@ ACTIVITY_LABELS = {
     "context_compaction": "Context compaction",
     "plan": "Plan update",
     "session_error": "Codex session error",
+    "session_event": "Codex session event",
+    "task_started": "Codex task started",
+    "task_complete": "Codex task completed",
+    "turn_aborted": "Codex turn aborted",
+    "thread_settings_applied": "Codex thread settings",
 }
+
+HIDDEN_SESSION_FIELDS = frozenset({"raw_content", "encrypted_content"})
+RUNTIME_USER_CONTEXT_MARKERS = (
+    "<environment_context>",
+    "<recommended_plugins>",
+)
 
 
 class ViewerDataError(RuntimeError):
@@ -153,6 +169,86 @@ def _bounded(value: Any, *, depth: int = 0) -> Any:
     return value
 
 
+def _public_session_value(value: Any) -> Any:
+    """Return complete public session content while removing hidden reasoning."""
+
+    if isinstance(value, list):
+        return [_public_session_value(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            str(key): _public_session_value(item)
+            for key, item in value.items()
+            if key not in HIDDEN_SESSION_FIELDS
+        }
+    return value
+
+
+def _thread_settings_summary(value: Any) -> dict[str, Any]:
+    settings = value if isinstance(value, dict) else {}
+    collaboration = settings.get("collaboration_mode")
+    collaboration = collaboration if isinstance(collaboration, dict) else {}
+    collaboration_settings = collaboration.get("settings")
+    collaboration_settings = (
+        collaboration_settings if isinstance(collaboration_settings, dict) else {}
+    )
+    return {
+        key: item
+        for key, item in {
+            "model": settings.get("model"),
+            "model_provider_id": settings.get("model_provider_id"),
+            "service_tier": settings.get("service_tier"),
+            "reasoning_effort": settings.get("reasoning_effort"),
+            "approval_policy": settings.get("approval_policy"),
+            "approvals_reviewer": settings.get("approvals_reviewer"),
+            "permission_profile": settings.get("permission_profile"),
+            "cwd": settings.get("cwd"),
+            "personality": settings.get("personality"),
+            "collaboration_mode": collaboration.get("mode"),
+            "collaboration_model": collaboration_settings.get("model"),
+            "collaboration_reasoning_effort": collaboration_settings.get(
+                "reasoning_effort"
+            ),
+        }.items()
+        if item is not None
+    }
+
+
+def _runtime_user_context(value: str) -> bool:
+    return any(marker in value for marker in RUNTIME_USER_CONTEXT_MARKERS)
+
+
+def _world_state_summary(value: Any) -> dict[str, Any]:
+    payload = value if isinstance(value, dict) else {}
+    state = payload.get("state")
+    state = state if isinstance(state, dict) else {}
+    host_skills = state.get("host_skills")
+    host_skills = host_skills if isinstance(host_skills, dict) else {}
+    return _public_session_value(
+        {
+            "full_snapshot": payload.get("full"),
+            "agents_md": state.get("agents_md"),
+            "apps_instructions": state.get("apps_instructions"),
+            "plugins_instructions": state.get("plugins_instructions"),
+            "skills": state.get("skills"),
+            "host_skills": {
+                "include_instructions": host_skills.get("includeInstructions"),
+                "body_present": bool(host_skills.get("body")),
+            },
+            "orchestrator_skills": state.get("orchestrator_skills"),
+            "collaboration_mode": state.get("collaboration_mode"),
+            "multi_agent_mode": state.get("multi_agent_mode"),
+            "multi_agent_usage_hint": state.get("multi_agent_usage_hint"),
+            "permissions": state.get("permissions"),
+            "environments": state.get("environments"),
+            "environments_instructions": state.get("environments_instructions"),
+            "model": state.get("model"),
+            "personality": state.get("personality"),
+            "realtime": state.get("realtime"),
+            "git_attribution": state.get("git_attribution"),
+        }
+    )
+
+
 def _content_text(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value.strip()] if value.strip() else []
@@ -202,22 +298,50 @@ def _normalize_activity(
             continue
         event_type = payload.get("type")
         if event_type != "item_completed":
-            if isinstance(event_type, str) and "error" in event_type.lower():
-                output.append(
-                    {
-                        "kind": "session_error",
-                        "label": ACTIVITY_LABELS["session_error"],
-                        "status": "error",
-                        "title": event_type,
-                        "parts": [],
-                        "details": _bounded(payload),
-                        "timestamp_utc": record.get("timestamp"),
-                        "elapsed_seconds": _elapsed(record.get("timestamp"), origin),
-                        "ordinal": record.get("ordinal"),
-                        "robot_command": None,
-                        "source_path": None,
-                    }
-                )
+            if event_type == "token_count":
+                # The latest aggregate is exposed in the session summary. Repeating
+                # every token checkpoint would overwhelm the physical timeline.
+                continue
+            if not isinstance(event_type, str):
+                continue
+            kind = event_type if event_type in {
+                "task_started",
+                "task_complete",
+                "turn_aborted",
+                "thread_settings_applied",
+            } else (
+                "session_error"
+                if "error" in event_type.lower()
+                else "session_event"
+            )
+            details: Any
+            if event_type == "thread_settings_applied":
+                details = _thread_settings_summary(payload.get("thread_settings"))
+            else:
+                details = {
+                    key: child
+                    for key, child in payload.items()
+                    if key != "type"
+                }
+            output.append(
+                {
+                    "kind": kind,
+                    "label": ACTIVITY_LABELS.get(kind, event_type),
+                    "status": (
+                        "error"
+                        if kind in {"session_error", "turn_aborted"}
+                        else "completed"
+                    ),
+                    "title": event_type,
+                    "parts": [],
+                    "details": _public_session_value(details),
+                    "timestamp_utc": record.get("timestamp"),
+                    "elapsed_seconds": _elapsed(record.get("timestamp"), origin),
+                    "ordinal": record.get("ordinal"),
+                    "robot_command": None,
+                    "source_path": None,
+                }
+            )
             continue
         item = payload.get("item")
         if not isinstance(item, dict):
@@ -241,25 +365,37 @@ def _normalize_activity(
             parts = _content_text(item.get("content") or item.get("text"))
             if not parts:
                 continue
+            details = {
+                key: item.get(key)
+                for key in ("phase", "status")
+                if item.get(key) is not None
+            }
         elif item_type == "CommandExecution":
             title = _command_text(item.get("command")) or "Command execution"
             robot_command = _robot_command(title)
             details = {
-                key: item.get(key)
-                for key in (
-                    "status",
-                    "exit_code",
-                    "cwd",
-                    "stdout",
-                    "stderr",
-                    "duration",
-                )
-                if item.get(key) not in (None, "", [])
+                key: child
+                for key, child in item.items()
+                if key
+                not in {
+                    "id",
+                    "type",
+                    "command",
+                    "aggregated_output",
+                    "formatted_output",
+                    *HIDDEN_SESSION_FIELDS,
+                }
+                and child not in (None, "", [])
             }
         elif item_type == "ImageView":
             path = item.get("path")
             title = str(path) if path is not None else "Image view"
             source_path = str(path) if isinstance(path, str) else None
+            details = {
+                key: child
+                for key, child in item.items()
+                if key not in {"id", "type", "path", *HIDDEN_SESSION_FIELDS}
+            }
         elif item_type == "ContextCompaction":
             parts = ["The Codex context was compacted within this session."]
         else:
@@ -273,17 +409,27 @@ def _normalize_activity(
             details = {
                 key: child
                 for key, child in item.items()
-                if key not in {"id", "type", "raw_content"}
+                if key not in {"id", "type", *HIDDEN_SESSION_FIELDS}
             }
+
+        event_metadata = {
+            key: child
+            for key, child in payload.items()
+            if key not in {"type", "item", *HIDDEN_SESSION_FIELDS}
+        }
+        if event_metadata:
+            if not isinstance(details, dict):
+                details = {"item_details": details} if details is not None else {}
+            details["session_event"] = event_metadata
 
         output.append(
             {
                 "kind": kind,
                 "label": ACTIVITY_LABELS.get(kind, item_type),
                 "status": str(item.get("status") or "completed"),
-                "title": _bounded_text(title) if title else None,
-                "parts": [_bounded_text(part) for part in parts],
-                "details": _bounded(details) if details else None,
+                "title": title if title else None,
+                "parts": parts,
+                "details": _public_session_value(details) if details else None,
                 "timestamp_utc": record.get("timestamp"),
                 "elapsed_seconds": _elapsed(record.get("timestamp"), origin),
                 "ordinal": record.get("ordinal"),
@@ -292,6 +438,124 @@ def _normalize_activity(
             }
         )
     return output
+
+
+def _session_coverage(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Account for every persisted record without exposing hidden reasoning."""
+
+    top_level_types: Counter[str] = Counter()
+    event_types: Counter[str] = Counter()
+    item_types: Counter[str] = Counter()
+    response_item_types: Counter[str] = Counter()
+    classifications: Counter[str] = Counter()
+    unsupported_types: Counter[str] = Counter()
+    hidden_fields: Counter[str] = Counter()
+
+    def count_hidden(value: Any) -> None:
+        if isinstance(value, list):
+            for child in value:
+                count_hidden(child)
+        elif isinstance(value, dict):
+            for key, child in value.items():
+                if key in HIDDEN_SESSION_FIELDS and child not in (None, "", []):
+                    hidden_fields[key] += 1
+                else:
+                    count_hidden(child)
+
+    for record in records:
+        record_type = str(record.get("type") or "<missing>")
+        top_level_types[record_type] += 1
+        count_hidden(record)
+        payload = record.get("payload")
+        payload = payload if isinstance(payload, dict) else {}
+
+        if record_type in {"session_meta", "world_state", "turn_context"}:
+            classifications["summarized"] += 1
+        elif record_type == "event_msg":
+            event_type = str(payload.get("type") or "<missing>")
+            event_types[event_type] += 1
+            if event_type == "item_completed":
+                item = payload.get("item")
+                item = item if isinstance(item, dict) else {}
+                item_type = str(item.get("type") or "<missing>")
+                item_types[item_type] += 1
+                if item_type == "UserMessage":
+                    classifications["summarized"] += 1
+                elif item_type == "Reasoning" and not _content_text(
+                    item.get("summary_text") or item.get("summary")
+                ):
+                    classifications["deliberately_hidden"] += 1
+                elif item_type == "<missing>":
+                    classifications["unsupported"] += 1
+                    unsupported_types["event_msg/item_completed/<missing>"] += 1
+                else:
+                    classifications["rendered"] += 1
+            elif event_type == "token_count":
+                classifications["summarized"] += 1
+            elif event_type == "<missing>":
+                classifications["unsupported"] += 1
+                unsupported_types["event_msg/<missing>"] += 1
+            else:
+                # Known lifecycle events and future JSON events are shown as
+                # sanitized generic cards rather than being silently discarded.
+                classifications["rendered"] += 1
+        elif record_type == "response_item":
+            response_type = str(payload.get("type") or "<missing>")
+            response_item_types[response_type] += 1
+            if response_type == "message":
+                if payload.get("role") in {"developer", "user"}:
+                    content = payload.get("content")
+                    content = content if isinstance(content, list) else []
+                    nontext = Counter(
+                        str(item.get("type") or "<missing>")
+                        for item in content
+                        if not isinstance(item, dict)
+                        or not isinstance(item.get("text"), str)
+                    )
+                    if nontext:
+                        classifications["unsupported"] += 1
+                        for content_type, count in nontext.items():
+                            unsupported_types[
+                                f"response_item/message/{payload.get('role')}/"
+                                f"{content_type}"
+                            ] += count
+                    else:
+                        classifications["summarized"] += 1
+                else:
+                    classifications["structural_duplicate"] += 1
+            elif response_type in {"custom_tool_call", "custom_tool_call_output"}:
+                classifications["structural_duplicate"] += 1
+            elif response_type == "reasoning":
+                classifications["deliberately_hidden"] += 1
+            else:
+                classifications["unsupported"] += 1
+                unsupported_types[f"response_item/{response_type}"] += 1
+        else:
+            classifications["unsupported"] += 1
+            unsupported_types[record_type] += 1
+
+    return {
+        "schema_version": "libero.codex_viewer_coverage.v1",
+        "source_record_count": len(records),
+        "classification_counts": dict(sorted(classifications.items())),
+        "top_level_types": dict(sorted(top_level_types.items())),
+        "event_types": dict(sorted(event_types.items())),
+        "completed_item_types": dict(sorted(item_types.items())),
+        "response_item_types": dict(sorted(response_item_types.items())),
+        "hidden_field_counts": dict(sorted(hidden_fields.items())),
+        "unsupported_types": dict(sorted(unsupported_types.items())),
+        "public_trace_complete": not unsupported_types,
+        "policy": {
+            "rendered": "Shown in the action-aligned timeline.",
+            "summarized": "Shown once in prompt, runtime, completion, or token summaries.",
+            "structural_duplicate": "Protocol duplicate of a rendered completed item.",
+            "deliberately_hidden": (
+                "Raw/encrypted model reasoning is not human-visible Codex output and "
+                "is never exposed. Public reasoning summaries remain rendered."
+            ),
+            "unsupported": "Unknown record shape; surfaced as a coverage warning.",
+        },
+    }
 
 
 def _session_context(
@@ -320,9 +584,11 @@ def _session_context(
             continue
         text = "\n\n".join(_content_text(payload.get("content")))
         if text and text not in messages[role]:
-            messages[role].append(_bounded_text(text))
+            messages[role].append(text)
     token_usage: dict[str, Any] = {}
     completion: dict[str, Any] = {}
+    task_started: dict[str, Any] = {}
+    thread_settings: dict[str, Any] = {}
     for record in records:
         if record.get("type") != "event_msg":
             continue
@@ -335,27 +601,92 @@ def _session_context(
                 token_usage = info["total_token_usage"]
         elif payload.get("type") == "task_complete":
             completion = payload
+        elif payload.get("type") == "task_started":
+            task_started = payload
+        elif payload.get("type") == "thread_settings_applied":
+            thread_settings = _thread_settings_summary(payload.get("thread_settings"))
+
+    turn_contexts = [
+        record.get("payload")
+        for record in records
+        if record.get("type") == "turn_context"
+        and isinstance(record.get("payload"), dict)
+    ]
+    latest_turn = turn_contexts[-1] if turn_contexts else {}
+    world_states = [
+        record.get("payload")
+        for record in records
+        if record.get("type") == "world_state"
+        and isinstance(record.get("payload"), dict)
+    ]
+    collaboration = latest_turn.get("collaboration_mode")
+    collaboration = collaboration if isinstance(collaboration, dict) else {}
+    runtime_settings = {
+        key: item
+        for key, item in {
+            "model": latest_turn.get("model") or thread_settings.get("model"),
+            "reasoning_effort": latest_turn.get("effort")
+            or thread_settings.get("reasoning_effort"),
+            "sandbox_policy": latest_turn.get("sandbox_policy"),
+            "approval_policy": latest_turn.get("approval_policy")
+            or thread_settings.get("approval_policy"),
+            "approvals_reviewer": latest_turn.get("approvals_reviewer")
+            or thread_settings.get("approvals_reviewer"),
+            "permission_profile": latest_turn.get("permission_profile")
+            or thread_settings.get("permission_profile"),
+            "workspace_roots": latest_turn.get("workspace_roots"),
+            "current_date": latest_turn.get("current_date"),
+            "timezone": latest_turn.get("timezone"),
+            "collaboration_mode": collaboration.get("mode")
+            or thread_settings.get("collaboration_mode"),
+            "multi_agent_version": latest_turn.get("multi_agent_version"),
+            "realtime_active": latest_turn.get("realtime_active"),
+            "context_window": task_started.get("model_context_window"),
+            "thread_settings": thread_settings or None,
+            "world_state": (
+                _world_state_summary(world_states[-1]) if world_states else None
+            ),
+        }.items()
+        if item is not None
+    }
+    task_messages = [
+        message for message in messages["user"] if not _runtime_user_context(message)
+    ]
+    runtime_user_messages = [
+        message for message in messages["user"] if _runtime_user_context(message)
+    ]
     return {
         "session_id": metadata.get("session_id") or session_meta.get("session_id"),
         "cli_version": session_meta.get("cli_version"),
         "originator": session_meta.get("originator"),
+        "source": session_meta.get("source"),
+        "thread_source": session_meta.get("thread_source"),
+        "session_created_at": session_meta.get("timestamp"),
         "model_provider": session_meta.get("model_provider"),
         "cwd": metadata.get("cwd") or session_meta.get("cwd"),
         "episode_resumable": metadata.get("episode_resumable"),
-        "base_instructions": _bounded_text(base_text) if isinstance(base_text, str) else None,
+        "base_instructions": base_text if isinstance(base_text, str) else None,
         "developer_messages": messages["developer"],
         "user_messages": messages["user"],
+        "task_user_messages": task_messages,
+        "runtime_user_messages": runtime_user_messages,
+        "runtime_settings": _public_session_value(runtime_settings),
+        "turn_context_count": len(turn_contexts),
         "token_usage": token_usage,
-        "completion": _bounded(completion),
+        "completion": _public_session_value(completion),
+        "coverage": _session_coverage(records),
     }
 
 
-def _file_url_path(value: str) -> Path | None:
+def _file_url_path(value: str, *, base: Path | None = None) -> Path | None:
     parsed = urlsplit(value)
     if parsed.scheme == "file":
         return Path(unquote(parsed.path)).resolve()
     if not parsed.scheme:
-        return Path(value).expanduser().resolve()
+        path = Path(value).expanduser()
+        if not path.is_absolute() and base is not None:
+            path = base / path
+        return path.resolve()
     return None
 
 
@@ -408,8 +739,35 @@ class RunRepository:
         value = manifest.get("workspace")
         if not isinstance(value, str) or not value:
             return None
-        path = Path(value).expanduser().resolve()
-        return path if path.is_dir() else None
+        # Ephemeral workspaces may later be reclaimed by the operating system.
+        # Keep the recorded path for historical ImageView reconstruction.
+        return Path(value).expanduser().resolve()
+
+    @staticmethod
+    def _viewed_artifact_index(run: RunFiles) -> dict[str, Path]:
+        manifest = _read_json(run.directory / "viewed_artifacts_manifest.json")
+        entries = manifest.get("artifacts")
+        if not isinstance(entries, list):
+            return {}
+        output: dict[str, Path] = {}
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            archived = entry.get("archived_file")
+            if not isinstance(archived, str):
+                continue
+            archived_path = (run.directory / archived).resolve()
+            try:
+                archived_path.relative_to(run.directory)
+            except ValueError:
+                continue
+            if not archived_path.is_file():
+                continue
+            for key in ("source_path", "source_absolute_path"):
+                source = entry.get(key)
+                if isinstance(source, str) and source:
+                    output[source] = archived_path
+        return output
 
     def _artifact_token(
         self,
@@ -439,11 +797,10 @@ class RunRepository:
     ) -> str | None:
         if source_path is None:
             return None
-        source = _file_url_path(source_path)
+        workspace = self._workspace_root(run, manifest)
+        source = _file_url_path(source_path, base=workspace)
         if source is None:
             return None
-        marker = Path("benchmark_inputs/current_observation")
-        workspace = self._workspace_root(run, manifest)
         if workspace is not None and current_observation_id is not None:
             try:
                 relative = source.relative_to(workspace)
@@ -451,8 +808,10 @@ class RunRepository:
                 relative = None
             if relative is not None:
                 parts = relative.parts
-                marker_parts = marker.parts
-                if parts[: len(marker_parts)] == marker_parts:
+                for marker in CURRENT_OBSERVATION_MARKERS:
+                    marker_parts = marker.parts
+                    if parts[: len(marker_parts)] != marker_parts:
+                        continue
                     tail = Path(*parts[len(marker_parts) :])
                     historical = (
                         run.directory
@@ -462,6 +821,12 @@ class RunRepository:
                     )
                     if historical.is_file():
                         return self._artifact_token(run, manifest, historical)
+        viewed_artifacts = self._viewed_artifact_index(run)
+        archived = viewed_artifacts.get(source_path) or viewed_artifacts.get(
+            os.fspath(source)
+        )
+        if archived is not None:
+            return self._artifact_token(run, manifest, archived)
         if source.is_file():
             return self._artifact_token(run, manifest, source)
         return None
@@ -564,6 +929,7 @@ class RunRepository:
             run.directory,
             run.directory / "actions.jsonl",
             run.directory / "codex_session.jsonl",
+            run.directory / "viewed_artifacts_manifest.json",
             run.directory / "result.json",
             run.directory / "private_observations",
         )
@@ -658,8 +1024,11 @@ class RunRepository:
         session_metadata = _read_json(run.directory / "codex_session_metadata.json")
         actions = _read_jsonl(run.directory / "actions.jsonl")
         task_instruction = ""
+        archived_prompt = run.directory / "agent_prompt.txt"
         workspace = self._workspace_root(run, manifest)
         prompt_path = workspace / "TASK_PROMPT.txt" if workspace is not None else None
+        if archived_prompt.is_file():
+            prompt_path = archived_prompt
         if prompt_path is not None and prompt_path.is_file():
             try:
                 task_instruction = prompt_path.read_text(encoding="utf-8").splitlines()[0]
@@ -697,6 +1066,29 @@ class RunRepository:
         result = _read_json(run.directory / "result.json")
         activity, session = self._session(run)
         steps, tail, alignment = self._steps(run, manifest, activity)
+        normalized_activity = [
+            item
+            for step in steps
+            for item in step.get("agent_activity", [])
+        ] + tail
+        image_views = [
+            item for item in normalized_activity if item.get("kind") == "image_view"
+        ]
+        available_image_views = sum(
+            isinstance(item.get("artifact"), str) for item in image_views
+        )
+        artifact_coverage = {
+            "image_view_events": len(image_views),
+            "image_view_artifacts_available": available_image_views,
+            "image_view_artifacts_missing": len(image_views) - available_image_views,
+        }
+        session_coverage = session.get("coverage")
+        if isinstance(session_coverage, dict):
+            session_coverage["artifact_coverage"] = artifact_coverage
+            session_coverage["viewer_complete"] = bool(
+                session_coverage.get("public_trace_complete")
+                and artifact_coverage["image_view_artifacts_missing"] == 0
+            )
         video = None
         if (run.directory / "continuous_video.mp4").is_file():
             video = {
