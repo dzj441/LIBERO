@@ -312,6 +312,17 @@ pre {
   padding: 0.35rem 0.1rem 0.65rem;
 }
 
+.timeline-episode {
+  align-self: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 0 0.35rem;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .timeline-step {
   flex: 0 0 auto;
   min-width: 5.8rem;

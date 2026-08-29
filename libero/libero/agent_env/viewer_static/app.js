@@ -125,7 +125,8 @@ function renderRunHeader(detail) {
     : failed
       ? "× official failure"
       : summary.status || "in progress";
-  elements.taskTitle.textContent = summary.task_instruction || summary.name || summary.id;
+  elements.taskTitle.textContent =
+    summary.curriculum_name || summary.task_instruction || summary.name || summary.id;
   elements.subtitle.textContent = `${summary.id} · ${summary.suite || "unknown suite"} / task ${summary.task_id ?? "?"}`;
   elements.summaryGrid.replaceChildren(
     summaryItem("Profile", summary.profile),
@@ -147,9 +148,13 @@ function renderRunHeader(detail) {
   );
 }
 
-function renderVideo(detail) {
-  if (detail.video?.artifact) {
-    elements.video.src = artifactUrl(detail.video.artifact);
+function renderVideo(detail, episodeIndex = null) {
+  const selected =
+    (detail.videos || []).find((item) => item.episode_index === episodeIndex) ||
+    detail.video;
+  if (selected?.artifact) {
+    const source = artifactUrl(selected.artifact);
+    if (elements.video.src !== source) elements.video.src = source;
     elements.video.classList.remove("hidden");
     elements.noVideo.classList.add("hidden");
   } else {
@@ -195,13 +200,24 @@ function renderSession(detail) {
 function renderTimeline() {
   const steps = state.detail?.steps || [];
   elements.timeline.replaceChildren();
+  let previousEpisode = null;
   for (const step of steps) {
+    if (step.episode_index !== null && step.episode_index !== previousEpisode) {
+      const marker = document.createElement("span");
+      marker.className = "timeline-episode";
+      marker.textContent = `Episode ${step.episode_index + 1}`;
+      elements.timeline.append(marker);
+      previousEpisode = step.episode_index;
+    }
     const button = document.createElement("button");
     button.type = "button";
     button.className = `timeline-step ${step.index === state.selectedStep ? "active" : ""}`;
     const number = document.createElement("span");
     number.className = "step-number";
-    number.textContent = `A${step.index}`;
+    number.textContent =
+      step.episode_index === null
+        ? `A${step.index}`
+        : `E${step.episode_index + 1}·A${step.episode_action_index}`;
     const command = document.createElement("span");
     command.className = "step-command";
     command.textContent = step.command;
@@ -309,7 +325,12 @@ function renderSelectedStep() {
   elements.stepCounter.textContent = `${state.selectedStep + 1} / ${steps.length}`;
   elements.previousStep.disabled = state.selectedStep <= 0;
   elements.nextStep.disabled = state.selectedStep >= steps.length - 1;
-  elements.stepTitle.textContent = `A${step.index} · activity before robot ${step.command}`;
+  const actionLabel =
+    step.episode_index === null
+      ? `A${step.index}`
+      : `E${step.episode_index + 1}·A${step.episode_action_index}`;
+  elements.stepTitle.textContent = `${actionLabel} · activity before robot ${step.command}`;
+  renderVideo(state.detail, step.episode_index);
   renderActivities(elements.activityList, step.agent_activity || []);
   elements.actionStatus.replaceChildren();
   const status = document.createElement("span");

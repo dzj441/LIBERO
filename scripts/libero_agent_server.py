@@ -57,7 +57,10 @@ class EpisodeRequestHandler(socketserver.StreamRequestHandler):
             if not isinstance(request, dict):
                 raise ValueError("request must be a JSON object")
             response = self.server.service.handle(request)  # type: ignore[attr-defined]
-            if request.get("command") == "finish":
+            if (
+                request.get("command") == "finish"
+                and self.server.service.finished  # type: ignore[attr-defined]
+            ):
                 self.server.stop_requested = True  # type: ignore[attr-defined]
         except (ValueError, RuntimeError) as exc:
             self.server.service.record_error(request, exc)  # type: ignore[attr-defined]

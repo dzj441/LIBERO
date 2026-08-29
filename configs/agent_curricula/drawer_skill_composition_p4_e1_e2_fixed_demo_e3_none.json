@@ -1,0 +1,31 @@
+{
+  "schema_version": "libero.agent_curriculum_plan.v1",
+  "name": "drawer_skill_composition_p4_e1_e2_fixed_demo_e3_none",
+  "profile": "level4",
+  "episodes": [
+    {
+      "suite": "libero_90",
+      "task_id": 7,
+      "init_state_id": 17,
+      "seed": 1830315042,
+      "icl_condition": "fixed_demo",
+      "fixed_demo_master": "outputs/replay/libero90_open_top_drawer_demo_0_p4_master_v2"
+    },
+    {
+      "suite": "libero_90",
+      "task_id": 29,
+      "init_state_id": 17,
+      "seed": 1830315042,
+      "icl_condition": "fixed_demo",
+      "fixed_demo_master": "outputs/replay/libero90_put_bowl_top_drawer_demo_0_p4_master_v2"
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 3,
+      "init_state_id": 22,
+      "seed": 1830315042,
+      "icl_condition": "none"
+    }
+  ],
+  "primary_metric_episode_index": 2
+}

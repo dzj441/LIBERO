@@ -14,6 +14,9 @@ from .profiles import ObservationProfile
 
 
 SERVER_READY_SCHEMA_VERSION = "libero.agent_server_ready.v1"
+CURRICULUM_SERVER_READY_SCHEMA_VERSION = (
+    "libero.agent_curriculum_server_ready.v1"
+)
 
 
 def build_server_ready_contract(
@@ -80,6 +83,70 @@ def validate_server_ready_contract(
         "LIBERO server ready contract differs from launcher request: "
         + ", ".join(differing)
     )
+
+
+def build_curriculum_server_ready_contract(
+    *,
+    episodes: list[Mapping[str, Any]],
+    profile: ObservationProfile | int | str,
+    resolution: int,
+    render_gpu_device_id: int,
+    initial_settle_control_steps: int,
+    max_agent_steps: int | None,
+    action_interface: ActionInterface | str,
+) -> dict[str, Any]:
+    """Commit to an ordered multi-episode run before Codex is launched."""
+
+    if not episodes:
+        raise ValueError("curriculum must contain at least one episode")
+    profile = ObservationProfile.parse(profile)
+    action_interface = ActionInterface.parse(action_interface)
+    committed_episodes = []
+    for episode_index, episode in enumerate(episodes):
+        instruction = " ".join(str(episode["task_instruction"]).split())
+        committed_episodes.append(
+            {
+                "episode_index": episode_index,
+                "suite": str(episode["suite"]),
+                "task_id": int(episode["task_id"]),
+                "init_state_id": int(episode["init_state_id"]),
+                "seed": int(episode["seed"]),
+                "task_instruction_sha256": sha256_text(instruction),
+                "icl_condition": str(episode["icl_condition"]),
+                "fixed_demo_master_manifest_sha256": episode.get(
+                    "fixed_demo_master_manifest_sha256"
+                ),
+            }
+        )
+    return {
+        "schema_version": CURRICULUM_SERVER_READY_SCHEMA_VERSION,
+        "transport": "unix_socket",
+        "protocol": "libero.agent_unix_socket.v1",
+        "run_mode": "multi_episode_curriculum",
+        "episode_count": len(committed_episodes),
+        "episodes": committed_episodes,
+        "observation_profile": profile.public_name,
+        "resolution": int(resolution),
+        "render_gpu_device_id": int(render_gpu_device_id),
+        "initial_settle_control_steps": int(initial_settle_control_steps),
+        "max_agent_steps_per_episode": (
+            None if max_agent_steps is None else int(max_agent_steps)
+        ),
+        "action_interface": action_interface.value,
+        "accepted_operations": [
+            "start",
+            action_interface.wire_command,
+            "finish",
+        ],
+        "max_native_osc_micro_steps_per_submission": (
+            MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
+            if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
+            else None
+        ),
+        "observation_retention": "current_only",
+        "observation_publication": "atomic_replace_before_response",
+        "next_task_disclosure": "start_response_only",
+    }
 
 
 def canonical_json_sha256(value: Mapping[str, Any]) -> str:

@@ -825,6 +825,7 @@ class RunRepository:
         manifest: dict[str, Any],
         source_path: str | None,
         current_observation_id: str | None,
+        episode_index: int | None = None,
     ) -> str | None:
         if source_path is None:
             return None
@@ -844,12 +845,9 @@ class RunRepository:
                     if parts[: len(marker_parts)] != marker_parts:
                         continue
                     tail = Path(*parts[len(marker_parts) :])
-                    historical = (
-                        run.directory
-                        / "private_observations"
-                        / current_observation_id
-                        / tail
-                    )
+                    historical = self._private_observation_root(
+                        run, current_observation_id, episode_index
+                    ) / tail
                     if historical.is_file():
                         return self._artifact_token(run, manifest, historical)
         viewed_artifacts = self._viewed_artifact_index(run)
@@ -863,13 +861,19 @@ class RunRepository:
         return None
 
     def _observation(
-        self, run: RunFiles, manifest: dict[str, Any], observation_id: Any
+        self,
+        run: RunFiles,
+        manifest: dict[str, Any],
+        observation_id: Any,
+        episode_index: int | None = None,
     ) -> dict[str, Any] | None:
         if not isinstance(observation_id, str) or not OBSERVATION_ID.fullmatch(
             observation_id
         ):
             return None
-        root = run.directory / "private_observations" / observation_id
+        root = self._private_observation_root(
+            run, observation_id, episode_index
+        )
         value = _read_json(root / "observation.json")
         if not value:
             return None
@@ -948,6 +952,22 @@ class RunRepository:
             "coordinate_conventions": _bounded(value.get("coordinate_conventions")),
         }
 
+    @staticmethod
+    def _private_observation_root(
+        run: RunFiles,
+        observation_id: str,
+        episode_index: int | None,
+    ) -> Path:
+        if episode_index is None:
+            return run.directory / "private_observations" / observation_id
+        return (
+            run.directory
+            / "episodes"
+            / f"episode_{episode_index:03d}"
+            / "private_observations"
+            / observation_id
+        )
+
     def _session(self, run: RunFiles) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         records = _read_jsonl(run.directory / "codex_session.jsonl")
         metadata = _read_json(run.directory / "codex_session_metadata.json")
@@ -976,6 +996,8 @@ class RunRepository:
         steps: list[dict[str, Any]] = []
         activity_cursor = 0
         current_observation_id: str | None = None
+        current_episode_index: int | None = None
+        per_episode_action_indices: dict[int, int] = {}
         matched_commands = 0
         for index, action in enumerate(actions):
             request = action.get("request")
@@ -983,6 +1005,19 @@ class RunRepository:
             request = request if isinstance(request, dict) else {}
             response = response if isinstance(response, dict) else {}
             command = str(request.get("command") or "unknown")
+            raw_episode_index = action.get("episode_index")
+            episode_index = (
+                int(raw_episode_index)
+                if isinstance(raw_episode_index, int)
+                else None
+            )
+            if episode_index is not None:
+                episode_action_index = per_episode_action_indices.get(
+                    episode_index, 0
+                )
+                per_episode_action_indices[episode_index] = episode_action_index + 1
+            else:
+                episode_action_index = index
             match_index: int | None = None
             for candidate_index in range(activity_cursor, len(activity)):
                 if activity[candidate_index].get("robot_command") == command:
@@ -1000,9 +1035,13 @@ class RunRepository:
                     manifest,
                     item.pop("source_path", None),
                     current_observation_id,
+                    current_episode_index,
                 )
                 if artifact is not None:
                     item["artifact"] = artifact
+            if command == "start" and episode_index != current_episode_index:
+                current_observation_id = None
+                current_episode_index = episode_index
             prior_id = current_observation_id
             next_id = response.get("observation_id")
             if isinstance(next_id, str):
@@ -1010,6 +1049,9 @@ class RunRepository:
             steps.append(
                 {
                     "index": index,
+                    "episode_index": episode_index,
+                    "episode_action_index": episode_action_index,
+                    "episode_count": action.get("episode_count"),
                     "command": command,
                     "recorded_at": action.get("recorded_at"),
                     "elapsed_seconds": (
@@ -1023,10 +1065,10 @@ class RunRepository:
                     "prior_observation_id": prior_id,
                     "next_observation_id": next_id,
                     "input_observation": self._observation(
-                        run, manifest, prior_id
+                        run, manifest, prior_id, episode_index
                     ),
                     "output_observation": self._observation(
-                        run, manifest, next_id
+                        run, manifest, next_id, episode_index
                     ),
                     "agent_activity": grouped,
                 }
@@ -1038,6 +1080,7 @@ class RunRepository:
                 manifest,
                 item.pop("source_path", None),
                 current_observation_id,
+                current_episode_index,
             )
             if artifact is not None:
                 item["artifact"] = artifact
@@ -1068,8 +1111,16 @@ class RunRepository:
         return {
             "id": run.run_id,
             "name": run.directory.name,
-            "suite": manifest.get("suite"),
-            "task_id": manifest.get("task_id"),
+            "suite": (
+                "multi_episode"
+                if manifest.get("run_mode") == "multi_episode_curriculum"
+                else manifest.get("suite")
+            ),
+            "task_id": (
+                f"{manifest.get('episode_count')} episodes"
+                if manifest.get("run_mode") == "multi_episode_curriculum"
+                else manifest.get("task_id")
+            ),
             "task_instruction": task_instruction,
             "profile": manifest.get("profile"),
             "icl": manifest.get("icl_condition"),
@@ -1081,7 +1132,15 @@ class RunRepository:
             "action_count": len(actions),
             "has_session": (run.directory / "codex_session.jsonl").is_file(),
             "session_id": session_metadata.get("session_id"),
-            "has_video": (run.directory / "continuous_video.mp4").is_file(),
+            "has_video": (
+                (run.directory / "continuous_video.mp4").is_file()
+                or any(
+                    (path / "continuous_video.mp4").is_file()
+                    for path in (run.directory / "episodes").glob("episode_*")
+                )
+            ),
+            "episode_count": manifest.get("episode_count"),
+            "curriculum_name": manifest.get("curriculum_name"),
         }
 
     def list_runs(self) -> list[dict[str, Any]]:
@@ -1126,6 +1185,25 @@ class RunRepository:
                 "label": "Continuous simulator video",
                 "artifact": "run/continuous_video.mp4",
             }
+        videos = []
+        episodes_root = run.directory / "episodes"
+        if episodes_root.is_dir():
+            for episode_directory in sorted(episodes_root.glob("episode_[0-9][0-9][0-9]")):
+                episode_video = episode_directory / "continuous_video.mp4"
+                if not episode_video.is_file():
+                    continue
+                episode_index = int(episode_directory.name.rsplit("_", 1)[1])
+                videos.append(
+                    {
+                        "episode_index": episode_index,
+                        "label": f"Episode {episode_index + 1} simulator video",
+                        "artifact": self._artifact_token(
+                            run, manifest, episode_video
+                        ),
+                    }
+                )
+            if videos and video is None:
+                video = videos[0]
         detail = {
             "summary": self.summary(run),
             "manifest": _bounded(manifest),
@@ -1135,6 +1213,7 @@ class RunRepository:
             "steps": steps,
             "tail_activity": tail,
             "video": video,
+            "videos": videos,
         }
         self._detail_cache[run_id] = (stamp, detail)
         self._artifact_cache[run_id] = (stamp, self._allowed_artifacts(detail))

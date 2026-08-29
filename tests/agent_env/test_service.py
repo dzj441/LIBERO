@@ -2,7 +2,7 @@ import json
 
 from libero.libero.agent_env.control import ActionInterface
 from libero.libero.agent_env.profiles import project_public_observation
-from libero.libero.agent_env.service import AgentEpisodeService
+from libero.libero.agent_env.service import AgentEpisodeService, MultiEpisodeService
 from test_profiles import _master
 
 
@@ -189,3 +189,124 @@ def test_service_marks_unfinished_episode_aborted(tmp_path):
     result = json.loads((run_directory / "result.json").read_text())
     assert result["status"] == "aborted"
     assert result["reason"] == "codex_process_exited_before_finish"
+
+
+def test_multi_episode_service_sequences_children_and_records_final_target(tmp_path):
+    workspace = tmp_path / "workspace"
+    run_directory = tmp_path / "private"
+    environments = [_FakeAgentEnv(), _FakeAgentEnv(), _FakeAgentEnv()]
+    prepared: list[int] = []
+    closed: list[int] = []
+
+    def before_start(index, episode_directory):
+        prepared.append(index)
+        return {
+            "fixed_demo_available": index != 1,
+            "expert_demo": (
+                "benchmark_inputs/expert_demo" if index != 1 else None
+            ),
+        }
+
+    def factory(index, episode_directory):
+        return AgentEpisodeService(
+            environments[index],
+            workspace_directory=workspace,
+            current_observation_directory=(
+                workspace / "benchmark_inputs" / "current_observation"
+            ),
+            private_run_directory=episode_directory,
+            action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+        )
+
+    service = MultiEpisodeService(
+        task_instructions=("first task", "second task", "combined task"),
+        service_factory=factory,
+        private_run_directory=run_directory,
+        before_episode_start=before_start,
+        after_episode_close=closed.append,
+    )
+
+    for episode_index in range(3):
+        started = service.handle({"command": "start"})
+        assert started["episode_index"] == episode_index
+        assert started["episode_count"] == 3
+        assert started["task_instruction"] == (
+            "first task",
+            "second task",
+            "combined task",
+        )[episode_index]
+        assert started["fixed_demo_available"] == (
+            episode_index != 1
+        )
+        stepped = service.handle(
+            {
+                "command": "osc_sequence",
+                "observation_id": "obs_000000",
+                "actions": [[0.1, 0.0, 0.0, 0.0, 0.2, 0.0, 1.0]],
+            }
+        )
+        assert stepped["episode_index"] == episode_index
+        finished = service.handle(
+            {"command": "finish", "observation_id": "obs_000001"}
+        )
+        assert finished["next_episode_available"] == (episode_index < 2)
+        assert finished["curriculum_complete"] == (episode_index == 2)
+
+    assert service.finished is True
+    assert prepared == [0, 1, 2]
+    assert closed == [0, 1, 2]
+    assert all(environment.closed for environment in environments)
+    result = json.loads((run_directory / "result.json").read_text())
+    assert result["status"] == "finished"
+    assert result["success"] is True
+    assert result["all_episodes_success"] is True
+    assert result["completed_episode_count"] == 3
+    assert result["accepted_agent_steps"] == 3
+    events = [
+        json.loads(line)
+        for line in (run_directory / "actions.jsonl").read_text().splitlines()
+    ]
+    assert [event["episode_index"] for event in events] == [
+        0,
+        0,
+        0,
+        1,
+        1,
+        1,
+        2,
+        2,
+        2,
+    ]
+    for episode_index in range(3):
+        episode_directory = (
+            run_directory / "episodes" / f"episode_{episode_index:03d}"
+        )
+        assert (episode_directory / "result.json").is_file()
+        assert len((episode_directory / "actions.jsonl").read_text().splitlines()) == 3
+
+
+def test_multi_episode_service_requires_finish_before_next_start(tmp_path):
+    workspace = tmp_path / "workspace"
+
+    def factory(_index, episode_directory):
+        return AgentEpisodeService(
+            _FakeAgentEnv(),
+            workspace_directory=workspace,
+            current_observation_directory=(
+                workspace / "benchmark_inputs" / "current_observation"
+            ),
+            private_run_directory=episode_directory,
+        )
+
+    service = MultiEpisodeService(
+        task_instructions=("first", "second"),
+        service_factory=factory,
+        private_run_directory=tmp_path / "private",
+    )
+    service.handle({"command": "start"})
+    try:
+        service.handle({"command": "start"})
+    except RuntimeError as exc:
+        assert "finish the active episode" in str(exc)
+    else:
+        raise AssertionError("a second start must be rejected while active")

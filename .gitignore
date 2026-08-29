@@ -19,6 +19,7 @@ libero.egg-info/
 
 # Evaluator-local runs, credentials, and generated absolute-path configuration.
 /agent_runs/
+/agent_runs_legacy/
 /ghp
 /libero/config.yaml
 

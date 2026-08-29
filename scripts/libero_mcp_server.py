@@ -18,12 +18,14 @@ MAX_REQUEST_BYTES = 1024 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
 MAX_MICRO_STEPS = 20
 SERVER_INSTRUCTIONS = (
-    "Control the prepared LIBERO episode only through start_episode, "
-    "osc_sequence, and finish_episode. Call start_episode exactly once. "
-    "After each successful action, inspect the atomically updated current "
-    "observation files before acting again. Call finish_episode exactly once "
-    "to obtain the official checker result. At most 50 osc_sequence calls are "
-    "accepted, and each call accepts 1 to 20 normalized OSC_POSE actions."
+    "Control each prepared LIBERO episode only through start_episode, "
+    "osc_sequence, and finish_episode. For each episode, call start_episode "
+    "once, inspect the atomically updated current observation after every "
+    "successful action, and call finish_episode once to obtain its official "
+    "checker result. A non-final finish reports that another episode is "
+    "available; begin it with start_episode. At most 50 osc_sequence calls are "
+    "accepted per episode, and each call accepts 1 to 20 normalized OSC_POSE "
+    "actions."
 )
 
 
@@ -55,8 +57,8 @@ def tool_definitions() -> list[dict[str, Any]]:
             "name": "start_episode",
             "title": "Start LIBERO episode",
             "description": (
-                "Start the prepared episode exactly once and publish its initial "
-                "current observation."
+                "Start the next prepared episode when none is active, publish its "
+                "initial current observation, and return its task instruction."
             ),
             "inputSchema": empty_schema,
             "annotations": mutating,
@@ -88,8 +90,8 @@ def tool_definitions() -> list[dict[str, Any]]:
             "name": "finish_episode",
             "title": "Finish LIBERO episode",
             "description": (
-                "Finish the active episode exactly once and return the official "
-                "task-success result."
+                "Finish the active episode once and return its official task-success "
+                "result plus whether another prepared episode is available."
             ),
             "inputSchema": empty_schema,
             "annotations": mutating,

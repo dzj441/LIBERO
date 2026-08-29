@@ -283,6 +283,123 @@ def test_viewer_aligns_libero_mcp_calls_with_actions(tmp_path: Path) -> None:
     )
 
 
+def test_viewer_segments_curriculum_actions_observations_and_videos(tmp_path: Path) -> None:
+    _repository, run, workspace = _make_run(tmp_path)
+    _write_json(
+        run / "run_manifest.json",
+        {
+            "run_id": "example",
+            "run_mode": "multi_episode_curriculum",
+            "curriculum_name": "drawer composition",
+            "episode_count": 2,
+            "profile": "level4",
+            "action_interface": "native_osc_sequence",
+            "workspace": str(workspace),
+        },
+    )
+    _write_jsonl(
+        run / "actions.jsonl",
+        [
+            {
+                "episode_index": episode,
+                "episode_count": 2,
+                "recorded_at": f"2026-01-01T00:00:0{index + 1}Z",
+                "request": {
+                    "command": command,
+                    **(
+                        {"observation_id": "obs_000000"}
+                        if command == "finish"
+                        else {}
+                    ),
+                },
+                "response": {
+                    "ok": True,
+                    **(
+                        {"observation_id": "obs_000000"}
+                        if command == "start"
+                        else {"success": True}
+                    ),
+                },
+            }
+            for index, (episode, command) in enumerate(
+                ((0, "start"), (0, "finish"), (1, "start"), (1, "finish"))
+            )
+        ],
+    )
+    records = [
+        {
+            "timestamp": "2026-01-01T00:00:00Z",
+            "ordinal": 0,
+            "type": "session_meta",
+            "payload": {
+                "session_id": "session-1",
+                "cwd": str(workspace),
+            },
+        }
+    ]
+    for ordinal, tool in enumerate(
+        ("start_episode", "finish_episode", "start_episode", "finish_episode"),
+        start=1,
+    ):
+        records.append(
+            _event(
+                f"2026-01-01T00:00:0{ordinal}Z",
+                ordinal,
+                {
+                    "type": "McpToolCall",
+                    "id": f"mcp-{ordinal}",
+                    "server": "libero",
+                    "tool": tool,
+                    "arguments": {},
+                    "status": "completed",
+                },
+            )
+        )
+    _write_jsonl(run / "codex_session.jsonl", records)
+    shutil.rmtree(run / "private_observations")
+    (run / "continuous_video.mp4").unlink()
+    for episode in range(2):
+        root = (
+            run
+            / "episodes"
+            / f"episode_{episode:03d}"
+            / "private_observations"
+            / "obs_000000"
+        )
+        (root / "head").mkdir(parents=True)
+        (root / "head/rgb.png").write_bytes(f"episode-{episode}".encode())
+        _write_json(
+            root / "observation.json",
+            {
+                "observation_id": "obs_000000",
+                "frame_index": 0,
+                "profile": "level4",
+                "cameras": {"head": {"rgb": {"file": "head/rgb.png"}}},
+            },
+        )
+        (root.parents[1] / "continuous_video.mp4").write_bytes(
+            f"video-{episode}".encode()
+        )
+
+    detail = RunRepository(run.parent).detail("example")
+
+    assert [step["episode_index"] for step in detail["steps"]] == [0, 0, 1, 1]
+    assert [step["episode_action_index"] for step in detail["steps"]] == [0, 1, 0, 1]
+    assert detail["steps"][0]["output_observation"]["observation_id"] == (
+        "obs_000000"
+    )
+    first_artifact = detail["steps"][0]["output_observation"]["images"][0][
+        "artifact"
+    ]
+    third_artifact = detail["steps"][2]["output_observation"]["images"][0][
+        "artifact"
+    ]
+    assert "episode_000" in first_artifact
+    assert "episode_001" in third_artifact
+    assert [video["episode_index"] for video in detail["videos"]] == [0, 1]
+    assert detail["summary"]["curriculum_name"] == "drawer composition"
+
+
 def test_current_observation_image_view_maps_to_historical_frame(tmp_path: Path) -> None:
     repository, run, _ = _make_run(tmp_path)
 
