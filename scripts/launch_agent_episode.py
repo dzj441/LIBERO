@@ -142,6 +142,7 @@ def main() -> int:
         icl_condition=args.icl,
         action_interface=action_interface,
         control_transport=args.control_transport,
+        max_agent_steps=args.max_agent_steps,
     )
     _prepare_workspace(
         source_root,
@@ -472,6 +473,7 @@ def build_task_prompt(
     icl_condition: str = "none",
     action_interface: ActionInterface | str = ActionInterface.METRIC_OSC_STEP,
     control_transport: str = "cli",
+    max_agent_steps: int = 50,
 ) -> str:
     instruction = " ".join(str(task_instruction).split())
     action_interface = ActionInterface.parse(action_interface)
@@ -484,6 +486,11 @@ def build_task_prompt(
         raise ValueError("MCP currently requires native_osc_sequence")
     if icl_condition not in {"none", "fixed_demo"}:
         raise ValueError(f"unsupported ICL condition: {icl_condition!r}")
+    if not 1 <= int(max_agent_steps) <= MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS:
+        raise ValueError(
+            "max_agent_steps must be between 1 and "
+            f"{MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS}"
+        )
     icl_notice = ""
     if icl_condition == "fixed_demo":
         compatibility_notice = ""
@@ -509,7 +516,7 @@ def build_task_prompt(
     if control_transport == "mcp":
         start_instruction = (
             "1. Call the `start_episode` robot tool exactly once to begin and "
-            "receive the initial observation."
+            "receive the initial observation and `max_agent_steps` budget."
         )
         control_instruction = (
             "2. Control the robot with the `osc_sequence` robot tool. Its "
@@ -520,7 +527,7 @@ def build_task_prompt(
             "policy interval; translation 1.0 corresponds to 0.05 m, rotation "
             "1.0 to a 0.5 rad rotation-vector component, gripper -1 opens, and "
             "+1 closes. One sequence call counts as one Agent action, with at "
-            f"most {MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} accepted calls."
+            f"most {int(max_agent_steps)} accepted calls."
         )
         finish_instruction = (
             "4. When you have completed the task, call the `finish_episode` robot "
@@ -559,7 +566,7 @@ def build_task_prompt(
             "policy interval; translation 1.0 corresponds to 0.05 m, rotation "
             "1.0 to a 0.5 rad rotation-vector component, gripper -1 opens, and "
             "+1 closes. One sequence submission counts as one Agent action, with "
-            f"at most {MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} accepted submissions."
+            f"at most {int(max_agent_steps)} accepted submissions."
         )
         finish_instruction = (
             "4. When you have completed the task, run `liberoctl finish` exactly "

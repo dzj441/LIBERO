@@ -103,7 +103,7 @@ def main() -> int:
                 initial_settle_control_steps=config[
                     "initial_settle_control_steps"
                 ],
-                max_agent_steps=config["max_agent_steps_per_episode"],
+                max_agent_steps=episode["max_agent_steps"],
                 private_control_step_callback=recorder.append_raw_observation,
             )
         except BaseException:
@@ -227,6 +227,7 @@ def _read_config(path: Path) -> dict[str, Any]:
             "init_state_id",
             "seed",
             "task_instruction",
+            "max_agent_steps",
             "icl_condition",
             "fixed_demo_master_manifest_sha256",
         }
@@ -239,6 +240,9 @@ def _read_config(path: Path) -> dict[str, Any]:
             raise ValueError("fixed_demo curriculum episode requires a master")
         if episode["icl_condition"] == "none" and master is not None:
             raise ValueError("non-ICL curriculum episode cannot name a master")
+        max_agent_steps = episode["max_agent_steps"]
+        if not isinstance(max_agent_steps, int) or max_agent_steps <= 0:
+            raise ValueError("curriculum episode max_agent_steps must be positive")
     return value
 
 

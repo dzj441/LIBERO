@@ -93,10 +93,11 @@ normalized OSC components would be incorrect.
 
 ## Native OSC sequence A/B design record
 
-The metric `osc-step` interface remains the default. A controlled A/B can
-select a mutually exclusive native `osc-sequence` condition so that an
-Agent can use the same per-control-cycle action semantics as the source LIBERO
-demonstrations without an offline conversion to Agent-specific macro actions.
+The metric `osc-step` interface remains available as an explicit legacy
+condition. The default MCP control path exposes the mutually exclusive native
+`osc-sequence` condition so that an Agent can use the same per-control-cycle
+action semantics as the source LIBERO demonstrations without an offline
+conversion to Agent-specific macro actions.
 
 One accepted `osc-sequence` submission contains between 1 and 20 normalized
 7D `OSC_POSE` micro actions. Each vector has the native LIBERO component order
@@ -107,11 +108,12 @@ after the submitted sequence. Intermediate simulation frames remain
 evaluator-private and are retained in the continuous audit video; no
 intermediate public observation is materialized.
 
-A native-sequence run permits at most 50 accepted submissions, so its total
-public control budget is bounded by 1,000 native policy intervals. One run
-exposes either metric `osc-step` or native `osc-sequence`, never both, keeping
-the action-interface A/B identifiable. `start` and `finish` retain their
-existing meanings, and only `finish` exposes official task success.
+The accepted-submission budget is configured per episode and returned by
+`start_episode`. The standard default remains 50 submissions, while the hard
+implementation cap is 100 submissions (2,000 native policy intervals). One
+run exposes either metric `osc-step` or native `osc-sequence`, never both,
+keeping the action-interface A/B identifiable. `start` and `finish` retain
+their existing meanings, and only `finish` exposes official task success.
 
 ## Episode lifecycle
 

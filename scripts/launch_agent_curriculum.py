@@ -72,6 +72,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--codex-model")
     parser.add_argument("--codex-effort")
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
+    parser.add_argument(
+        "--experience-guidance",
+        choices=("implicit", "explicit"),
+        default="implicit",
+        help="Whether the prompt identifies the first episodes as preparation",
+    )
     return parser.parse_args()
 
 
@@ -107,12 +113,17 @@ def main() -> int:
         run_directory.rmdir()
         raise
 
-    episodes = _enrich_episodes(plan["episodes"], source_root=source_root)
+    episodes = _enrich_episodes(
+        plan["episodes"],
+        source_root=source_root,
+        default_max_agent_steps=args.max_agent_steps,
+    )
     prompt = build_curriculum_prompt(
         episode_count=len(episodes),
         fixed_demo_possible=any(
             episode["icl_condition"] == "fixed_demo" for episode in episodes
         ),
+        experience_guidance=args.experience_guidance,
     )
     _prepare_workspace(
         source_root,
@@ -137,7 +148,11 @@ def main() -> int:
             "max_native_osc_micro_steps_per_submission": (
                 MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
             ),
-            "max_agent_steps_per_episode": args.max_agent_steps,
+            "default_max_agent_steps_per_episode": args.max_agent_steps,
+            "episode_max_agent_steps": [
+                episode["max_agent_steps"] for episode in episodes
+            ],
+            "experience_guidance": args.experience_guidance,
             "observation_retention": "current_only",
             "next_task_disclosure": "start_response_only",
             "expert_demo": "published_per_episode_when_available",
@@ -191,7 +206,11 @@ def main() -> int:
         "resolution": args.resolution,
         "render_gpu_device_id": args.render_gpu_device_id,
         "initial_settle_control_steps": args.initial_settle_control_steps,
-        "max_agent_steps_per_episode": args.max_agent_steps,
+        "default_max_agent_steps_per_episode": args.max_agent_steps,
+        "episode_max_agent_steps": [
+            episode["max_agent_steps"] for episode in episodes
+        ],
+        "experience_guidance": args.experience_guidance,
         "action_interface": action_interface.value,
         "control_transport": "mcp",
         "source_commit": source_commit,
@@ -211,7 +230,11 @@ def main() -> int:
         "profile": profile,
         "action_interface": action_interface.value,
         "control_transport": "mcp",
-        "max_agent_steps_per_episode": args.max_agent_steps,
+        "default_max_agent_steps_per_episode": args.max_agent_steps,
+        "episode_max_agent_steps": [
+            episode["max_agent_steps"] for episode in episodes
+        ],
+        "experience_guidance": args.experience_guidance,
         "source_checkout": os.fspath(source_root),
         "source_commit": source_commit,
         "source_branch": _git_value(
@@ -309,7 +332,10 @@ def load_curriculum_plan(path: Path, *, source_root: Path) -> dict[str, Any]:
 
 
 def _enrich_episodes(
-    raw_episodes: list[dict[str, Any]], *, source_root: Path
+    raw_episodes: list[dict[str, Any]],
+    *,
+    source_root: Path,
+    default_max_agent_steps: int = 50,
 ) -> list[dict[str, Any]]:
     episodes = []
     for episode_index, raw in enumerate(raw_episodes):
@@ -329,6 +355,12 @@ def _enrich_episodes(
         suite = str(raw["suite"])
         task_id = int(raw["task_id"])
         task_instruction = _task_instruction(suite, task_id)
+        max_agent_steps = int(raw.get("max_agent_steps", default_max_agent_steps))
+        if not 1 <= max_agent_steps <= MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS:
+            raise ValueError(
+                f"episode {episode_index} max_agent_steps must be between 1 and "
+                f"{MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS}"
+            )
         master = None
         master_hash = None
         if master_value is not None:
@@ -356,6 +388,7 @@ def _enrich_episodes(
                 "init_state_id": int(raw["init_state_id"]),
                 "seed": int(raw["seed"]),
                 "task_instruction": task_instruction,
+                "max_agent_steps": max_agent_steps,
                 "icl_condition": icl_condition,
                 "fixed_demo_master": (
                     None if master is None else os.fspath(master)
@@ -366,7 +399,14 @@ def _enrich_episodes(
     return episodes
 
 
-def build_curriculum_prompt(*, episode_count: int, fixed_demo_possible: bool) -> str:
+def build_curriculum_prompt(
+    *,
+    episode_count: int,
+    fixed_demo_possible: bool,
+    experience_guidance: str = "implicit",
+) -> str:
+    if experience_guidance not in {"implicit", "explicit"}:
+        raise ValueError("experience_guidance must be implicit or explicit")
     demo_notice = ""
     if fixed_demo_possible:
         demo_notice = (
@@ -377,11 +417,19 @@ def build_curriculum_prompt(*, episode_count: int, fixed_demo_possible: bool) ->
             "measured EEF states, where EEF poses are observations rather than "
             "actions."
         )
+    guidance_notice = ""
+    if experience_guidance == "explicit":
+        guidance_notice = (
+            "\nThe episodes before the final episode are preparatory experiences. "
+            "Use any relevant experience from them when attempting the final "
+            "episode.\n"
+        )
     return f"""Complete {episode_count} prepared LIBERO episodes in order within this one session.
+{guidance_notice}
 
 For each episode:
-1. Call the `start_episode` robot tool when no episode is active. Its result gives the current `task_instruction`, episode index, initial observation, and whether a fixed demonstration is available.{demo_notice}
-2. Complete that current task with the `osc_sequence` robot tool. Its `actions` argument contains 1 to {MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION} normalized 7D OSC_POSE micro actions in `[dx, dy, dz, rx, ry, rz, gripper]` order. Every component must be within [-1, 1]. Translation 1.0 corresponds to 0.05 m, rotation 1.0 to a 0.5 rad rotation-vector component, gripper -1 opens, and +1 closes. Each episode accepts at most {MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} sequence calls.
+1. Call the `start_episode` robot tool when no episode is active. Its result gives the current `task_instruction`, episode index, initial observation, `max_agent_steps` budget, and whether a fixed demonstration is available.{demo_notice}
+2. Complete that current task with the `osc_sequence` robot tool. Its `actions` argument contains 1 to {MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION} normalized 7D OSC_POSE micro actions in `[dx, dy, dz, rx, ry, rz, gripper]` order. Every component must be within [-1, 1]. Translation 1.0 corresponds to 0.05 m, rotation 1.0 to a 0.5 rad rotation-vector component, gripper -1 opens, and +1 closes. Each sequence call counts as one Agent step.
 3. After each action, inspect `benchmark_inputs/current_observation/observation.json` and any referenced files before acting again.
 4. Call `finish_episode` once for the current task. If it returns `next_episode_available=true`, begin the next episode with `start_episode`. The run is complete only when `curriculum_complete=true`.
 """
@@ -573,6 +621,7 @@ def _public_plan_commitment(
                     "init_state_id",
                     "seed",
                     "task_instruction",
+                    "max_agent_steps",
                     "icl_condition",
                     "fixed_demo_master_manifest_sha256",
                 )

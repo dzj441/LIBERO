@@ -66,6 +66,7 @@ def test_curriculum_ready_contract_commits_order_without_plaintext_tasks():
             "init_state_id": 17,
             "seed": 11,
             "task_instruction": "open the top drawer of the cabinet",
+            "max_agent_steps": 50,
             "icl_condition": "fixed_demo",
             "fixed_demo_master_manifest_sha256": "a" * 64,
         },
@@ -75,6 +76,7 @@ def test_curriculum_ready_contract_commits_order_without_plaintext_tasks():
             "init_state_id": 22,
             "seed": 12,
             "task_instruction": "open the top drawer and put the bowl inside",
+            "max_agent_steps": 100,
             "icl_condition": "none",
             "fixed_demo_master_manifest_sha256": None,
         },
@@ -94,5 +96,6 @@ def test_curriculum_ready_contract_commits_order_without_plaintext_tasks():
     assert contract["episode_count"] == 2
     assert contract["next_task_disclosure"] == "start_response_only"
     assert contract["episodes"][0]["task_id"] == 7
+    assert contract["episode_max_agent_steps"] == [50, 100]
     assert "task_instruction" not in contract["episodes"][0]
     assert len(contract["episodes"][0]["task_instruction_sha256"]) == 64

@@ -112,6 +112,9 @@ def build_curriculum_server_ready_contract(
                 "init_state_id": int(episode["init_state_id"]),
                 "seed": int(episode["seed"]),
                 "task_instruction_sha256": sha256_text(instruction),
+                "max_agent_steps": int(
+                    episode.get("max_agent_steps", max_agent_steps)
+                ),
                 "icl_condition": str(episode["icl_condition"]),
                 "fixed_demo_master_manifest_sha256": episode.get(
                     "fixed_demo_master_manifest_sha256"
@@ -129,9 +132,12 @@ def build_curriculum_server_ready_contract(
         "resolution": int(resolution),
         "render_gpu_device_id": int(render_gpu_device_id),
         "initial_settle_control_steps": int(initial_settle_control_steps),
-        "max_agent_steps_per_episode": (
+        "default_max_agent_steps_per_episode": (
             None if max_agent_steps is None else int(max_agent_steps)
         ),
+        "episode_max_agent_steps": [
+            episode["max_agent_steps"] for episode in committed_episodes
+        ],
         "action_interface": action_interface.value,
         "accepted_operations": [
             "start",

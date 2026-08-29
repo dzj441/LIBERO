@@ -20,8 +20,20 @@ def test_curriculum_prompt_discloses_workflow_but_not_future_tasks():
     assert "next_episode_available=true" in prompt
     assert "curriculum_complete=true" in prompt
     assert "benchmark_inputs/expert_demo/" in prompt
+    assert "max_agent_steps" in prompt
+    assert "preparatory experiences" not in prompt
     assert "open the top drawer" not in prompt
     assert "put the bowl" not in prompt
+
+
+def test_explicit_curriculum_prompt_identifies_preparatory_experience():
+    prompt = build_curriculum_prompt(
+        episode_count=3,
+        fixed_demo_possible=True,
+        experience_guidance="explicit",
+    )
+    assert "episodes before the final episode are preparatory experiences" in prompt
+    assert "Use any relevant experience" in prompt
 
 
 def test_curriculum_plan_loads_without_exposing_task_instructions(tmp_path):
@@ -80,6 +92,22 @@ def test_curriculum_episode_enrichment_resolves_tasks_and_rejects_bad_icl(
     )
     assert episodes[0]["task_instruction"] == "suite_a task 1"
     assert episodes[0]["fixed_demo_master"] is None
+    assert episodes[0]["max_agent_steps"] == 50
+
+    configured = _enrich_episodes(
+        [
+            {
+                "suite": "suite_a",
+                "task_id": 1,
+                "init_state_id": 2,
+                "seed": 3,
+                "max_agent_steps": 100,
+                "icl_condition": "none",
+            }
+        ],
+        source_root=tmp_path,
+    )
+    assert configured[0]["max_agent_steps"] == 100
 
     with pytest.raises(ValueError, match="unsupported curriculum ICL"):
         _enrich_episodes(

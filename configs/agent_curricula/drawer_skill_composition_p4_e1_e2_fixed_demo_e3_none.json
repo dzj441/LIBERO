@@ -24,6 +24,7 @@
       "task_id": 3,
       "init_state_id": 22,
       "seed": 1830315042,
+      "max_agent_steps": 100,
       "icl_condition": "none"
     }
   ],

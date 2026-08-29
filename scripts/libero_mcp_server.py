@@ -23,9 +23,9 @@ SERVER_INSTRUCTIONS = (
     "once, inspect the atomically updated current observation after every "
     "successful action, and call finish_episode once to obtain its official "
     "checker result. A non-final finish reports that another episode is "
-    "available; begin it with start_episode. At most 50 osc_sequence calls are "
-    "accepted per episode, and each call accepts 1 to 20 normalized OSC_POSE "
-    "actions."
+    "available; begin it with start_episode. The start result reports the "
+    "active episode's max_agent_steps budget. Each osc_sequence call accepts "
+    "1 to 20 normalized OSC_POSE actions."
 )
 
 
@@ -58,7 +58,8 @@ def tool_definitions() -> list[dict[str, Any]]:
             "title": "Start LIBERO episode",
             "description": (
                 "Start the next prepared episode when none is active, publish its "
-                "initial current observation, and return its task instruction."
+                "initial current observation, and return its task instruction and "
+                "Agent-step budget."
             ),
             "inputSchema": empty_schema,
             "annotations": mutating,

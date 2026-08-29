@@ -9,6 +9,7 @@ from test_profiles import _master
 class _FakeAgentEnv:
     def __init__(self):
         self.closed = False
+        self.max_agent_steps = 50
 
     def start_episode(self):
         return {
@@ -69,6 +70,7 @@ def test_service_exposes_only_three_operations_and_current_observation(tmp_path)
         "ok": True,
         "observation_id": "obs_000000",
         "observation_file": "benchmark_inputs/current_observation/observation.json",
+        "max_agent_steps": 50,
         "execution": {},
     }
     current = workspace / started["observation_file"]

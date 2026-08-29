@@ -121,6 +121,7 @@ class AgentEpisodeService:
             "ok": True,
             "observation_id": observation["observation_id"],
             "observation_file": observation_file,
+            "max_agent_steps": self.agent_env.max_agent_steps,
             "execution": {},
         }
 

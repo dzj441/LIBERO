@@ -33,15 +33,15 @@ def _native_only_agent_env(max_agent_steps=None):
     return agent_env
 
 
-def test_native_sequence_submission_limit_is_hard_capped_at_fifty():
+def test_native_sequence_submission_limit_is_hard_capped_at_one_hundred():
     agent_env = _native_only_agent_env(max_agent_steps=None)
-    for index in range(50):
+    for index in range(100):
         result = agent_env.step_osc_sequence([[0.0] * 7])
         assert result["accepted_agent_step"] == index + 1
 
-    with pytest.raises(RuntimeError, match=r"agent step limit reached \(50\)"):
+    with pytest.raises(RuntimeError, match=r"agent step limit reached \(100\)"):
         agent_env.step_osc_sequence([[0.0] * 7])
-    assert agent_env.native_sequence_executor.calls == 50
+    assert agent_env.native_sequence_executor.calls == 100
 
 
 def test_native_sequence_honors_stricter_configured_submission_limit():
