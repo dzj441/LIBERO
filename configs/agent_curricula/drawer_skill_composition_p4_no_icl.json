@@ -1,0 +1,32 @@
+{
+  "schema_version": "libero.agent_curriculum_plan.v1",
+  "name": "drawer_skill_composition_p4_no_icl",
+  "profile": "level4",
+  "episodes": [
+    {
+      "suite": "libero_90",
+      "task_id": 7,
+      "init_state_id": 17,
+      "seed": 1830315042,
+      "max_agent_steps": 50,
+      "icl_condition": "none"
+    },
+    {
+      "suite": "libero_90",
+      "task_id": 29,
+      "init_state_id": 17,
+      "seed": 1830315042,
+      "max_agent_steps": 50,
+      "icl_condition": "none"
+    },
+    {
+      "suite": "libero_goal",
+      "task_id": 3,
+      "init_state_id": 22,
+      "seed": 1830315042,
+      "max_agent_steps": 100,
+      "icl_condition": "none"
+    }
+  ],
+  "primary_metric_episode_index": 2
+}

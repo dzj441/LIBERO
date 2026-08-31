@@ -1,0 +1,156 @@
+{
+  "schema_version": "libero.agent_experiment_matrix.v1",
+  "name": "drawer_experience_context_p4_pilot",
+  "task_family": "drawer_causal_composition",
+  "hypothesis": "Context benefit depends on modality and procedural relevance, not only the presence of additional tokens or trajectories.",
+  "capability_tags": [
+    "causal_composition",
+    "cross_episode_transfer",
+    "negative_transfer_control"
+  ],
+  "runs": [
+    {
+      "run_id": "drawer_context_none_r0",
+      "replicate_id": "r0",
+      "condition": "direct",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "none"
+      }
+    },
+    {
+      "run_id": "drawer_context_matched_text_r0",
+      "replicate_id": "r0",
+      "condition": "matched_text",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_matched_text.json"
+      }
+    },
+    {
+      "run_id": "drawer_context_matched_video_r0",
+      "replicate_id": "r0",
+      "condition": "matched_video",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_matched_video.json"
+      }
+    },
+    {
+      "run_id": "drawer_context_matched_procedural_text_r0",
+      "replicate_id": "r0",
+      "condition": "matched_procedural_text",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_matched_procedural_text.json"
+      }
+    },
+    {
+      "run_id": "drawer_context_matched_observations_r0",
+      "replicate_id": "r0",
+      "condition": "matched_observations",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_matched_observations.json"
+      }
+    },
+    {
+      "run_id": "drawer_context_matched_actions_r0",
+      "replicate_id": "r0",
+      "condition": "matched_actions",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_matched_actions.json"
+      }
+    },
+    {
+      "run_id": "drawer_context_matched_full_r0",
+      "replicate_id": "r0",
+      "condition": "matched_full",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_matched_full.json"
+      }
+    },
+    {
+      "run_id": "drawer_context_compositional_full_r0",
+      "replicate_id": "r0",
+      "condition": "compositional_full",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_compositional_full.json"
+      }
+    },
+    {
+      "run_id": "drawer_context_irrelevant_full_r0",
+      "replicate_id": "r0",
+      "condition": "irrelevant_full",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "experience_context",
+        "experience_context_spec": "configs/agent_contexts/drawer_irrelevant_full.json"
+      }
+    }
+  ]
+}

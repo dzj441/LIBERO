@@ -1,0 +1,339 @@
+{
+  "schema_version": "libero.agent_experiment_matrix.v1",
+  "name": "drawer_context_replication_p4_v1",
+  "task_family": "drawer_skill_composition",
+  "hypothesis": "Active support episodes improve a held-out composite drawer query beyond direct P4 control, while a same-task fixed demonstration provides an upper-bound context condition.",
+  "capability_tags": [
+    "causal_composition",
+    "contact_reasoning",
+    "cross_episode_transfer",
+    "negative_transfer"
+  ],
+  "runs": [
+    {
+      "run_id": "drawer_context_p4_r0_direct",
+      "replicate_id": "r0_init22_seed1830315042",
+      "condition": "direct",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "none"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r0_active_no_icl",
+      "replicate_id": "r0_init22_seed1830315042",
+      "condition": "active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 22,
+          "seed": 1830315042,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_context_p4_r0_query_demo",
+      "replicate_id": "r0_init22_seed1830315042",
+      "condition": "query_demo_upper_bound",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "fixed_demo",
+        "fixed_demo_master": "outputs/replay/open_top_drawer_put_bowl_demo_0_p4_master_v2"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r1_direct",
+      "replicate_id": "r1_init40_seed1402824501",
+      "condition": "direct",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 40,
+        "seed": 1402824501,
+        "max_agent_steps": 100,
+        "icl_condition": "none"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r1_active_no_icl",
+      "replicate_id": "r1_init40_seed1402824501",
+      "condition": "active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 40,
+          "seed": 1402824501,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_context_p4_r1_query_demo",
+      "replicate_id": "r1_init40_seed1402824501",
+      "condition": "query_demo_upper_bound",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 40,
+        "seed": 1402824501,
+        "max_agent_steps": 100,
+        "icl_condition": "fixed_demo",
+        "fixed_demo_master": "outputs/replay/open_top_drawer_put_bowl_demo_0_p4_master_v2"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r2_direct",
+      "replicate_id": "r2_init28_seed2057335465",
+      "condition": "direct",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 28,
+        "seed": 2057335465,
+        "max_agent_steps": 100,
+        "icl_condition": "none"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r2_active_no_icl",
+      "replicate_id": "r2_init28_seed2057335465",
+      "condition": "active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 28,
+          "seed": 2057335465,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_context_p4_r2_query_demo",
+      "replicate_id": "r2_init28_seed2057335465",
+      "condition": "query_demo_upper_bound",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 28,
+        "seed": 2057335465,
+        "max_agent_steps": 100,
+        "icl_condition": "fixed_demo",
+        "fixed_demo_master": "outputs/replay/open_top_drawer_put_bowl_demo_0_p4_master_v2"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r3_direct",
+      "replicate_id": "r3_init23_seed150201694",
+      "condition": "direct",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 23,
+        "seed": 150201694,
+        "max_agent_steps": 100,
+        "icl_condition": "none"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r3_active_no_icl",
+      "replicate_id": "r3_init23_seed150201694",
+      "condition": "active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 23,
+          "seed": 150201694,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_context_p4_r3_query_demo",
+      "replicate_id": "r3_init23_seed150201694",
+      "condition": "query_demo_upper_bound",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 23,
+        "seed": 150201694,
+        "max_agent_steps": 100,
+        "icl_condition": "fixed_demo",
+        "fixed_demo_master": "outputs/replay/open_top_drawer_put_bowl_demo_0_p4_master_v2"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r4_direct",
+      "replicate_id": "r4_init44_seed89713477",
+      "condition": "direct",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 44,
+        "seed": 89713477,
+        "max_agent_steps": 100,
+        "icl_condition": "none"
+      }
+    },
+    {
+      "run_id": "drawer_context_p4_r4_active_no_icl",
+      "replicate_id": "r4_init44_seed89713477",
+      "condition": "active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 44,
+          "seed": 89713477,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_context_p4_r4_query_demo",
+      "replicate_id": "r4_init44_seed89713477",
+      "condition": "query_demo_upper_bound",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_goal",
+        "task_id": 3,
+        "init_state_id": 44,
+        "seed": 89713477,
+        "max_agent_steps": 100,
+        "icl_condition": "fixed_demo",
+        "fixed_demo_master": "outputs/replay/open_top_drawer_put_bowl_demo_0_p4_master_v2"
+      }
+    }
+  ]
+}

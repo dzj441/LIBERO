@@ -1,0 +1,194 @@
+{
+  "schema_version": "libero.agent_experiment_matrix.v1",
+  "name": "drawer_demo_assisted_support_replication_p4_v1",
+  "task_family": "drawer_skill_composition",
+  "hypothesis": "Successful fixed demonstrations for the two support skills improve a held-out composite drawer query without providing a demonstration for that query.",
+  "capability_tags": [
+    "causal_composition",
+    "contact_reasoning",
+    "cross_episode_transfer",
+    "demonstration_conditioned_transfer"
+  ],
+  "runs": [
+    {
+      "run_id": "drawer_demo_support_p4_r0",
+      "replicate_id": "r0_init22_seed1830315042",
+      "condition": "demo_assisted_active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_open_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_put_bowl_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 22,
+          "seed": 1830315042,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_demo_support_p4_r1",
+      "replicate_id": "r1_init40_seed1402824501",
+      "condition": "demo_assisted_active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_open_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_put_bowl_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 40,
+          "seed": 1402824501,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_demo_support_p4_r2",
+      "replicate_id": "r2_init28_seed2057335465",
+      "condition": "demo_assisted_active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_open_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_put_bowl_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 28,
+          "seed": 2057335465,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_demo_support_p4_r3",
+      "replicate_id": "r3_init23_seed150201694",
+      "condition": "demo_assisted_active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_open_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_put_bowl_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 23,
+          "seed": 150201694,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "drawer_demo_support_p4_r4",
+      "replicate_id": "r4_init44_seed89713477",
+      "condition": "demo_assisted_active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 7,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_open_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 29,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/libero90_put_bowl_top_drawer_demo_0_p4_master_v2"
+        },
+        {
+          "suite": "libero_goal",
+          "task_id": 3,
+          "init_state_id": 44,
+          "seed": 89713477,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    }
+  ]
+}

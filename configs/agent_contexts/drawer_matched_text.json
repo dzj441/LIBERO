@@ -1,0 +1,13 @@
+{
+  "schema_version": "libero.experience_context_spec.v1",
+  "context_id": "drawer_matched_text",
+  "experiences": [
+    {
+      "experience_id": "experience_000",
+      "source_type": "expert_episode",
+      "master_root": "outputs/replay/open_top_drawer_put_bowl_demo_0_p4_master_v2",
+      "relation_to_target": "same_task_separate_episode",
+      "modalities": ["text"]
+    }
+  ]
+}

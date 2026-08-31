@@ -1,0 +1,20 @@
+{
+  "schema_version": "libero.experience_context_spec.v1",
+  "context_id": "drawer_compositional_full",
+  "experiences": [
+    {
+      "experience_id": "open_drawer_experience",
+      "source_type": "expert_episode",
+      "master_root": "outputs/replay/libero90_open_top_drawer_demo_0_p4_master_v2",
+      "relation_to_target": "compositional_subtask",
+      "modalities": ["text", "video", "observations", "actions"]
+    },
+    {
+      "experience_id": "put_bowl_experience",
+      "source_type": "expert_episode",
+      "master_root": "outputs/replay/libero90_put_bowl_top_drawer_demo_0_p4_master_v2",
+      "relation_to_target": "compositional_subtask",
+      "modalities": ["text", "video", "observations", "actions"]
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "schema_version": "libero.agent_experiment_matrix.v1",
+  "name": "stove_context_pilot_p4_v1",
+  "task_family": "stove_skill_composition",
+  "hypothesis": "Executing matched atomic Stove support tasks in one Agent context improves completion of a held-out turn-on-and-place query; fixed demonstrations for support skills isolate the value of successful support acquisition.",
+  "capability_tags": [
+    "articulated_contact",
+    "object_manipulation",
+    "causal_composition",
+    "cross_episode_transfer"
+  ],
+  "runs": [
+    {
+      "run_id": "stove_context_p4_direct",
+      "replicate_id": "pilot_init22_seed1830315042",
+      "condition": "direct",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_10",
+        "task_id": 2,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "none"
+      }
+    },
+    {
+      "run_id": "stove_context_p4_active_no_icl",
+      "replicate_id": "pilot_init22_seed1830315042",
+      "condition": "active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 20,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 19,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "none"
+        },
+        {
+          "suite": "libero_10",
+          "task_id": 2,
+          "init_state_id": 22,
+          "seed": 1830315042,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "stove_context_p4_demo_assisted_support",
+      "replicate_id": "pilot_init22_seed1830315042",
+      "condition": "demo_assisted_active_support",
+      "mode": "curriculum",
+      "profile": "level4",
+      "experience_guidance": "implicit",
+      "episodes": [
+        {
+          "suite": "libero_90",
+          "task_id": 20,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/stove_turn_on_demo_0_p4_master_v1"
+        },
+        {
+          "suite": "libero_90",
+          "task_id": 19,
+          "init_state_id": 17,
+          "seed": 1830315042,
+          "max_agent_steps": 50,
+          "icl_condition": "fixed_demo",
+          "fixed_demo_master": "outputs/replay/stove_put_moka_demo_0_p4_master_v1"
+        },
+        {
+          "suite": "libero_10",
+          "task_id": 2,
+          "init_state_id": 22,
+          "seed": 1830315042,
+          "max_agent_steps": 100,
+          "icl_condition": "none"
+        }
+      ]
+    },
+    {
+      "run_id": "stove_context_p4_query_demo",
+      "replicate_id": "pilot_init22_seed1830315042",
+      "condition": "query_demo_upper_bound",
+      "mode": "single_episode",
+      "profile": "level4",
+      "episode": {
+        "suite": "libero_10",
+        "task_id": 2,
+        "init_state_id": 22,
+        "seed": 1830315042,
+        "max_agent_steps": 100,
+        "icl_condition": "fixed_demo",
+        "fixed_demo_master": "outputs/replay/stove_turn_on_put_moka_demo_0_p4_master_v1"
+      }
+    }
+  ]
+}

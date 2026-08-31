@@ -26,6 +26,11 @@ from libero.libero.agent_env.control import (
     ActionInterface,
 )
 from libero.libero.agent_env.fixed_demo import file_sha256, project_fixed_demo_bundle
+from libero.libero.agent_env.experience_context import (
+    load_experience_context_spec,
+    project_experience_context_bundle,
+)
+from libero.libero.agent_env.context_audit import audit_experience_context_run
 from libero.libero.agent_env.runtime_contract import (
     build_server_ready_contract,
     canonical_json_sha256,
@@ -82,7 +87,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
     parser.add_argument(
         "--icl",
-        choices=("none", "fixed_demo"),
+        choices=("none", "fixed_demo", "experience_context"),
         default="none",
         help="Static in-context demonstration condition",
     )
@@ -90,6 +95,14 @@ def parse_args() -> argparse.Namespace:
         "--fixed-demo-master",
         type=Path,
         help="Evaluator-private verified P4 replay master for --icl fixed_demo",
+    )
+    parser.add_argument(
+        "--experience-context-spec",
+        type=Path,
+        help=(
+            "Evaluator-private multi-item context spec for "
+            "--icl experience_context"
+        ),
     )
     return parser.parse_args()
 
@@ -106,8 +119,16 @@ def main() -> int:
         )
     if args.icl == "fixed_demo" and args.fixed_demo_master is None:
         raise ValueError("--icl fixed_demo requires --fixed-demo-master")
-    if args.icl == "none" and args.fixed_demo_master is not None:
+    if args.icl != "fixed_demo" and args.fixed_demo_master is not None:
         raise ValueError("--fixed-demo-master is valid only with --icl fixed_demo")
+    if args.icl == "experience_context" and args.experience_context_spec is None:
+        raise ValueError(
+            "--icl experience_context requires --experience-context-spec"
+        )
+    if args.icl != "experience_context" and args.experience_context_spec is not None:
+        raise ValueError(
+            "--experience-context-spec is valid only with --icl experience_context"
+        )
     if (
         action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
         and args.max_agent_steps > MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS
@@ -159,6 +180,7 @@ def main() -> int:
         run_directory / "agent_workspace_contract.json",
     )
     icl_projection_receipt = None
+    experience_context_projection_receipt = None
     if args.icl == "fixed_demo":
         icl_projection_receipt = project_fixed_demo_bundle(
             master_root=args.fixed_demo_master,
@@ -169,6 +191,25 @@ def main() -> int:
         _write_json_atomic(
             run_directory / "icl_projection_receipt.json",
             icl_projection_receipt,
+        )
+    elif args.icl == "experience_context":
+        context_spec = load_experience_context_spec(
+            args.experience_context_spec,
+            artifact_root=source_root,
+        )
+        experience_context_projection_receipt = project_experience_context_bundle(
+            spec=context_spec,
+            destination=workspace / "benchmark_inputs" / "experience_context",
+            profile=args.profile,
+            target_task_instruction=task_instruction,
+        )
+        _write_json_atomic(
+            run_directory / "experience_context_projection_receipt.json",
+            experience_context_projection_receipt,
+        )
+        _archive_experience_context_contract(
+            workspace / "benchmark_inputs" / "experience_context",
+            run_directory / "experience_context_public_contract",
         )
     socket_path = workspace / ".libero" / "control.sock"
     server_ready_path = run_directory / "server_ready.json"
@@ -203,6 +244,12 @@ def main() -> int:
         "profile": expected_server_ready["observation_profile"],
         "icl_condition": args.icl,
         "fixed_demo_available": args.icl == "fixed_demo",
+        "experience_context_available": args.icl == "experience_context",
+        "experience_context_id": (
+            experience_context_projection_receipt["context_id"]
+            if experience_context_projection_receipt is not None
+            else None
+        ),
         "seed": args.seed,
         "resolution": args.resolution,
         "render_gpu_device_id": args.render_gpu_device_id,
@@ -223,10 +270,20 @@ def main() -> int:
     workspace_contract_sha256 = file_sha256(workspace / ".libero" / "episode.json")
     fixed_demo_manifest_sha256 = (
         None
-        if args.icl == "none"
+        if args.icl != "fixed_demo"
         else file_sha256(
             workspace / "benchmark_inputs" / "expert_demo" / "manifest.json"
         )
+    )
+    experience_context_manifest_sha256 = (
+        file_sha256(
+            workspace
+            / "benchmark_inputs"
+            / "experience_context"
+            / "manifest.json"
+        )
+        if args.icl == "experience_context"
+        else None
     )
     configuration_fingerprint = {
         **run_configuration,
@@ -236,6 +293,9 @@ def main() -> int:
         "operator_prompt_sha256": prompt_sha256,
         "workspace_contract_sha256": workspace_contract_sha256,
         "fixed_demo_manifest_sha256": fixed_demo_manifest_sha256,
+        "experience_context_manifest_sha256": (
+            experience_context_manifest_sha256
+        ),
         "server_ready_contract_sha256": canonical_json_sha256(
             expected_server_ready
         ),
@@ -277,6 +337,9 @@ def main() -> int:
             "operator_prompt_sha256": prompt_sha256,
             "workspace_contract_sha256": workspace_contract_sha256,
             "fixed_demo_manifest_sha256": fixed_demo_manifest_sha256,
+            "experience_context_manifest_sha256": (
+                experience_context_manifest_sha256
+            ),
             "expected_server_ready_contract_sha256": canonical_json_sha256(
                 expected_server_ready
             ),
@@ -328,6 +391,7 @@ def main() -> int:
     server_return_code: int | None = None
     infrastructure_error: str | None = None
     session_archive_error: str | None = None
+    archived_session: Path | None = None
     caught_exception: BaseException | None = None
     try:
         server_process = subprocess.Popen(
@@ -440,6 +504,20 @@ def main() -> int:
                 caught_exception = exc
     result_path = run_directory / "result.json"
     result = _read_json(result_path)
+    codex_session_infrastructure_error = None
+    if (
+        archived_session is not None
+        and codex_return_code not in (None, 0)
+        and result.get("status") != "finished"
+    ):
+        codex_session_infrastructure_error = (
+            _codex_infrastructure_error_from_session(archived_session)
+        )
+        if (
+            codex_session_infrastructure_error is not None
+            and infrastructure_error is None
+        ):
+            infrastructure_error = codex_session_infrastructure_error
     if caught_exception is not None and not result:
         result = {
             "schema_version": "libero.agent_run_result.v1",
@@ -447,7 +525,10 @@ def main() -> int:
             "reason": infrastructure_error,
             "finished_at": _utc_now(),
         }
-    if result.get("status") == "aborted" and codex_return_code is not None:
+    if codex_session_infrastructure_error is not None:
+        result["status"] = "infrastructure_error"
+        result["reason"] = codex_session_infrastructure_error
+    elif result.get("status") == "aborted" and codex_return_code is not None:
         result["reason"] = "codex_process_exited_before_finish"
     result.update(
         {
@@ -458,6 +539,17 @@ def main() -> int:
             "session_archive_error": session_archive_error,
         }
     )
+    _write_json_atomic(result_path, result)
+    context_audit_error = None
+    if args.icl in {"fixed_demo", "experience_context"}:
+        try:
+            context_audit = audit_experience_context_run(run_directory)
+            _write_json_atomic(
+                run_directory / "experience_context_audit.json", context_audit
+            )
+        except BaseException as exc:
+            context_audit_error = f"{type(exc).__name__}: {exc}"
+    result["context_audit_error"] = context_audit_error
     _write_json_atomic(result_path, result)
     if caught_exception is not None:
         print(infrastructure_error, file=sys.stderr, flush=True)
@@ -484,7 +576,7 @@ def build_task_prompt(
         and action_interface is not ActionInterface.NATIVE_OSC_SEQUENCE
     ):
         raise ValueError("MCP currently requires native_osc_sequence")
-    if icl_condition not in {"none", "fixed_demo"}:
+    if icl_condition not in {"none", "fixed_demo", "experience_context"}:
         raise ValueError(f"unsupported ICL condition: {icl_condition!r}")
     if not 1 <= int(max_agent_steps) <= MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS:
         raise ValueError(
@@ -512,6 +604,12 @@ def build_task_prompt(
             "OSC_POSE actions and measured EEF state observations. The measured "
             "EEF poses are observations, not actions."
             f"{compatibility_notice}\n"
+        )
+    elif icl_condition == "experience_context":
+        icl_notice = (
+            "\nOne or more embodied experiences are available at "
+            "`benchmark_inputs/experience_context/`. Public item manifests "
+            "describe each source task, outcome, and available modality.\n"
         )
     if control_transport == "mcp":
         start_instruction = (
@@ -708,8 +806,44 @@ def _prepare_workspace(
                 if icl_condition == "fixed_demo"
                 else None
             ),
+            "experience_context": (
+                "benchmark_inputs/experience_context"
+                if icl_condition == "experience_context"
+                else None
+            ),
         },
     )
+
+
+def _archive_experience_context_contract(
+    bundle_root: Path, destination: Path
+) -> None:
+    """Preserve public manifests without copying the large context payload."""
+
+    root = bundle_root.resolve()
+    manifest_path = root / "manifest.json"
+    manifest = _read_json(manifest_path)
+    destination.mkdir(parents=True)
+    shutil.copy2(manifest_path, destination / "manifest.json")
+    for item in manifest.get("experiences", []):
+        if not isinstance(item, dict):
+            raise ValueError("experience-context item summary is invalid")
+        experience_id = item.get("experience_id")
+        artifact = item.get("manifest")
+        relative = artifact.get("path") if isinstance(artifact, dict) else None
+        if (
+            not isinstance(experience_id, str)
+            or not isinstance(relative, str)
+            or Path(relative).is_absolute()
+        ):
+            raise ValueError("experience-context manifest reference is invalid")
+        source = (root / relative).resolve()
+        if (
+            os.path.commonpath((root, source)) != os.fspath(root)
+            or not source.is_file()
+        ):
+            raise ValueError("experience-context manifest escapes its bundle")
+        shutil.copy2(source, destination / f"{experience_id}.json")
 
 
 def _server_environment(
@@ -903,6 +1037,69 @@ def _copy_codex_session(
         },
     )
     return run_directory / "codex_session.jsonl"
+
+
+def _codex_infrastructure_error_from_session(session_path: Path) -> str | None:
+    """Return a public-safe Codex service failure recorded by the CLI session."""
+
+    infrastructure_error_codes = {
+        "usage_limit_exceeded",
+        "rate_limit_exceeded",
+        "stream_disconnected",
+        "service_unavailable",
+        "server_overloaded",
+    }
+    infrastructure_message_fragments = (
+        "usage limit",
+        "rate limit",
+        "stream disconnected",
+        "error sending request",
+        "service unavailable",
+        "connection reset",
+        "connection timed out",
+        "request timed out",
+        "temporarily unavailable",
+        "model is at capacity",
+        "server overloaded",
+    )
+    detected: str | None = None
+    try:
+        lines = session_path.open("r", encoding="utf-8")
+    except OSError:
+        return None
+    with lines:
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if record.get("type") != "event_msg":
+                continue
+            payload = record.get("payload")
+            if not isinstance(payload, dict) or payload.get("type") != "task_complete":
+                continue
+            error = payload.get("error")
+            if not isinstance(error, dict):
+                continue
+            code = str(
+                error.get("codex_error_info")
+                or error.get("codexErrorInfo")
+                or ""
+            ).strip()
+            message = " ".join(str(error.get("message") or "").split())
+            normalized_message = message.lower()
+            if code not in infrastructure_error_codes and not any(
+                fragment in normalized_message
+                for fragment in infrastructure_message_fragments
+            ):
+                continue
+            if code == "usage_limit_exceeded" or "usage limit" in normalized_message:
+                detected = "Codex usage limit reached before episode completion"
+            elif code == "rate_limit_exceeded" or "rate limit" in normalized_message:
+                detected = "Codex rate limit reached before episode completion"
+            else:
+                detected = "Codex service connection failed before episode completion"
+    return detected
 
 
 def _session_image_view_paths(session_path: Path) -> list[str]:

@@ -131,6 +131,7 @@ function renderRunHeader(detail) {
   elements.summaryGrid.replaceChildren(
     summaryItem("Profile", summary.profile),
     summaryItem("ICL", summary.icl),
+    summaryItem("Context", summary.experience_context_id),
     summaryItem("Action interface", summary.action_interface),
     summaryItem("Robot steps", summary.accepted_agent_steps ?? summary.action_count),
     summaryItem("Session", session.session_id || "unavailable"),

@@ -417,6 +417,23 @@ def test_current_observation_image_view_maps_to_historical_frame(tmp_path: Path)
     )
 
 
+def test_viewer_summary_reports_experience_context_id_from_receipt(
+    tmp_path: Path,
+) -> None:
+    repository, run, _workspace = _make_run(tmp_path)
+    manifest = json.loads((run / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest["icl_condition"] = "experience_context"
+    _write_json(run / "run_manifest.json", manifest)
+    _write_json(
+        run / "experience_context_projection_receipt.json",
+        {"context_id": "drawer_compositional_full"},
+    )
+
+    summary = repository.summary(repository.resolve_run("example"))
+
+    assert summary["experience_context_id"] == "drawer_compositional_full"
+
+
 def test_viewer_never_exposes_raw_reasoning(tmp_path: Path) -> None:
     repository, _, _ = _make_run(tmp_path)
 

@@ -1096,6 +1096,9 @@ class RunRepository:
         manifest = _read_json(run.directory / "run_manifest.json")
         result = _read_json(run.directory / "result.json")
         session_metadata = _read_json(run.directory / "codex_session_metadata.json")
+        experience_context_receipt = _read_json(
+            run.directory / "experience_context_projection_receipt.json"
+        )
         actions = _read_jsonl(run.directory / "actions.jsonl")
         task_instruction = ""
         archived_prompt = run.directory / "agent_prompt.txt"
@@ -1124,6 +1127,10 @@ class RunRepository:
             "task_instruction": task_instruction,
             "profile": manifest.get("profile"),
             "icl": manifest.get("icl_condition"),
+            "experience_context_id": (
+                manifest.get("experience_context_id")
+                or experience_context_receipt.get("context_id")
+            ),
             "action_interface": manifest.get("action_interface"),
             "created_at": manifest.get("created_at"),
             "status": result.get("status") or "in_progress",

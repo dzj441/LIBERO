@@ -1,0 +1,13 @@
+{
+  "schema_version": "libero.experience_context_spec.v1",
+  "context_id": "drawer_irrelevant_full",
+  "experiences": [
+    {
+      "experience_id": "experience_000",
+      "source_type": "expert_episode",
+      "master_root": "outputs/replay/alphabet_soup_demo_0_p4_master_v2",
+      "relation_to_target": "irrelevant_task",
+      "modalities": ["text", "video", "observations", "actions"]
+    }
+  ]
+}

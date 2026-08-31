@@ -18,6 +18,11 @@ from .fixed_demo import (
     validate_fixed_demo_bundle,
     validate_p4_replay_master,
 )
+from .experience_context import (
+    load_experience_context_spec,
+    project_experience_context_bundle,
+    validate_experience_context_bundle,
+)
 
 __all__ = [
     "EEFCommand",
@@ -31,9 +36,12 @@ __all__ = [
     "TaskEntitySelection",
     "infer_task_entities",
     "make_libero_agent_env",
+    "load_experience_context_spec",
+    "project_experience_context_bundle",
     "project_fixed_demo_bundle",
     "replace_current_public_observation",
     "validate_fixed_demo_bundle",
+    "validate_experience_context_bundle",
     "validate_p4_replay_master",
     "write_public_observation",
 ]

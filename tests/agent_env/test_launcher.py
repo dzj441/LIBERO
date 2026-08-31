@@ -5,12 +5,84 @@ import sys
 from libero.libero.agent_env.control import ActionInterface
 from scripts.launch_agent_episode import (
     _allocate_workspace,
+    _archive_experience_context_contract,
     _archive_viewed_artifacts,
+    _codex_infrastructure_error_from_session,
     _prepare_workspace,
     build_codex_command,
     build_task_prompt,
     parse_args,
 )
+
+
+def test_codex_usage_limit_is_classified_as_infrastructure_error(tmp_path):
+    session = tmp_path / "codex_session.jsonl"
+    session.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "error": {
+                        "message": "You've hit your usage limit.",
+                        "codex_error_info": "usage_limit_exceeded",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert _codex_infrastructure_error_from_session(session) == (
+        "Codex usage limit reached before episode completion"
+    )
+
+
+def test_codex_agent_error_is_not_misclassified_as_infrastructure(tmp_path):
+    session = tmp_path / "codex_session.jsonl"
+    session.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "error": {
+                        "message": "Agent command failed validation.",
+                        "codex_error_info": "other",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert _codex_infrastructure_error_from_session(session) is None
+
+
+def test_codex_model_capacity_is_classified_as_infrastructure_error(tmp_path):
+    session = tmp_path / "codex_session.jsonl"
+    session.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "task_complete",
+                    "error": {
+                        "message": "Selected model is at capacity.",
+                        "codex_error_info": "server_overloaded",
+                    },
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert _codex_infrastructure_error_from_session(session) == (
+        "Codex service connection failed before episode completion"
+    )
 
 
 def test_launcher_defaults_to_mcp_native_osc(monkeypatch):
@@ -51,6 +123,21 @@ def test_fixed_demo_prompt_only_adds_separate_episode_notice():
     assert "EEF poses are observations, not actions" in prompt
     assert "A commanded target is not guaranteed" not in prompt
     assert "imitate" not in prompt.lower()
+
+
+def test_experience_context_prompt_only_announces_public_bundle():
+    prompt = build_task_prompt(
+        "open the top drawer and put the bowl inside",
+        icl_condition="experience_context",
+        action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+        control_transport="mcp",
+    )
+    assert "benchmark_inputs/experience_context/" in prompt
+    assert "source task, outcome, and available modality" in prompt
+    assert "matched" not in prompt.lower()
+    assert "irrelevant" not in prompt.lower()
+    assert "relation" not in prompt.lower()
+    assert "expert_demo" not in prompt
 
 
 def test_native_sequence_prompt_documents_exact_bounded_micro_action_contract():
@@ -126,6 +213,55 @@ def test_mcp_workspace_exposes_adapter_without_liberoctl(tmp_path):
     assert episode["control_transport"] == "mcp"
     assert (workspace / "bin/libero_mcp_server").stat().st_mode & 0o111
     assert not (workspace / "bin/liberoctl").exists()
+
+
+def test_experience_context_workspace_names_only_the_public_context_root(tmp_path):
+    source_root = Path(__file__).resolve().parents[2]
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _prepare_workspace(
+        source_root,
+        workspace,
+        "prompt",
+        "test-run",
+        icl_condition="experience_context",
+        action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+        control_transport="mcp",
+    )
+    episode = json.loads((workspace / ".libero/episode.json").read_text())
+    assert episode["icl_condition"] == "experience_context"
+    assert episode["experience_context"] == (
+        "benchmark_inputs/experience_context"
+    )
+    assert episode["expert_demo"] is None
+
+
+def test_archives_context_manifests_without_large_payload(tmp_path):
+    bundle = tmp_path / "bundle"
+    item = bundle / "experiences" / "experience_000"
+    item.mkdir(parents=True)
+    (item / "manifest.json").write_text('{"item": true}\n', encoding="utf-8")
+    (item / "large.mp4").write_bytes(b"large payload")
+    (bundle / "manifest.json").write_text(
+        json.dumps(
+            {
+                "experiences": [
+                    {
+                        "experience_id": "experience_000",
+                        "manifest": {
+                            "path": "experiences/experience_000/manifest.json"
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    destination = tmp_path / "snapshot"
+    _archive_experience_context_contract(bundle, destination)
+    assert (destination / "manifest.json").is_file()
+    assert (destination / "experience_000.json").is_file()
+    assert not (destination / "large.mp4").exists()
 
 
 def test_codex_command_is_persistent_one_shot_and_noninteractive():
