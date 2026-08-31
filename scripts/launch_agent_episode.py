@@ -37,6 +37,11 @@ from libero.libero.agent_env.runtime_contract import (
     sha256_text,
     validate_server_ready_contract,
 )
+from libero.libero.agent_env.robomemarena import (
+    ROBOMEMARENA_SUITE,
+    get_robomemarena_task_spec,
+    robomemarena_source_fingerprint,
+)
 
 
 CONTROL_TRANSPORTS = ("cli", "mcp")
@@ -104,11 +109,20 @@ def parse_args() -> argparse.Namespace:
             "--icl experience_context"
         ),
     )
+    parser.add_argument(
+        "--robomemarena-root",
+        type=Path,
+        help=(
+            "Clean external RoboMemArena checkout; defaults to the sibling "
+            "RoboMemArena directory for --suite robomemarena"
+        ),
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    source_root = Path(__file__).resolve().parents[1]
     action_interface = ActionInterface.parse(args.action_interface)
     if (
         args.control_transport == "mcp"
@@ -129,6 +143,24 @@ def main() -> int:
         raise ValueError(
             "--experience-context-spec is valid only with --icl experience_context"
         )
+    task_source_fingerprint = None
+    if args.suite == ROBOMEMARENA_SUITE:
+        if args.icl != "none":
+            raise ValueError(
+                "RoboMemArena adapter v1 supports P1-P4 without ICL; "
+                "demonstration projection is a later integration"
+            )
+        args.robomemarena_root = (
+            args.robomemarena_root or source_root.parent / "RoboMemArena"
+        ).expanduser().resolve()
+        task_source_fingerprint = robomemarena_source_fingerprint(
+            args.robomemarena_root,
+            task_id=args.task_id,
+        )
+    elif args.robomemarena_root is not None:
+        raise ValueError(
+            "--robomemarena-root is valid only for --suite robomemarena"
+        )
     if (
         action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
         and args.max_agent_steps > MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS
@@ -137,7 +169,6 @@ def main() -> int:
             "native_osc_sequence permits at most "
             f"{MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS} accepted submissions"
         )
-    source_root = Path(__file__).resolve().parents[1]
     canonical_root = _canonical_repository_root(source_root)
     run_root = (args.run_root or canonical_root / "agent_runs").resolve()
     nvidia_runtime_root = (
@@ -169,7 +200,6 @@ def main() -> int:
         source_root,
         workspace,
         prompt,
-        run_id,
         icl_condition=args.icl,
         action_interface=action_interface,
         control_transport=args.control_transport,
@@ -236,6 +266,7 @@ def main() -> int:
         initial_settle_control_steps=args.initial_settle_control_steps,
         max_agent_steps=args.max_agent_steps,
         action_interface=action_interface,
+        task_source_fingerprint=task_source_fingerprint,
     )
     run_configuration = {
         "suite": args.suite,
@@ -257,6 +288,12 @@ def main() -> int:
         "max_agent_steps": args.max_agent_steps,
         "action_interface": action_interface.value,
         "control_transport": args.control_transport,
+        "task_source": (
+            ROBOMEMARENA_SUITE
+            if args.suite == ROBOMEMARENA_SUITE
+            else "libero_official"
+        ),
+        "task_source_fingerprint": task_source_fingerprint,
         "codex_binary": args.codex_bin,
         "codex_model_requested": args.codex_model,
         "codex_effort_requested": args.codex_effort,
@@ -344,8 +381,17 @@ def main() -> int:
                 expected_server_ready
             ),
             "source_worktree_status_sha256": sha256_text(source_status),
+            "task_source_fingerprint_sha256": (
+                None
+                if task_source_fingerprint is None
+                else canonical_json_sha256(task_source_fingerprint)
+            ),
         },
     }
+    if args.suite == ROBOMEMARENA_SUITE:
+        manifest["robomemarena_checkout"] = os.fspath(
+            args.robomemarena_root
+        )
     _write_json_atomic(run_directory / "run_manifest.json", manifest)
 
     server_command = [
@@ -381,6 +427,13 @@ def main() -> int:
         "--launcher-pid",
         str(os.getpid()),
     ]
+    if args.suite == ROBOMEMARENA_SUITE:
+        server_command.extend(
+            (
+                "--robomemarena-root",
+                os.fspath(args.robomemarena_root),
+            )
+        )
     server_log_path = run_directory / "server.log"
     codex_started_at = time.time()
     known_sessions = _session_files()
@@ -745,6 +798,8 @@ def build_codex_command(
 
 
 def _task_instruction(suite: str, task_id: int) -> str:
+    if suite == ROBOMEMARENA_SUITE:
+        return get_robomemarena_task_spec(task_id).instruction
     benchmark_class = get_benchmark(suite)
     task_suite = benchmark_class()
     if not 0 <= task_id < task_suite.get_num_tasks():
@@ -758,7 +813,6 @@ def _prepare_workspace(
     source_root: Path,
     workspace: Path,
     prompt: str,
-    run_id: str,
     *,
     icl_condition: str,
     action_interface: ActionInterface | str,
@@ -785,7 +839,6 @@ def _prepare_workspace(
         workspace / ".libero" / "episode.json",
         {
             "schema_version": "libero.agent_workspace.v1",
-            "run_id": run_id,
             "episode_resumable": False,
             "operations": (
                 list(MCP_TOOL_NAMES)

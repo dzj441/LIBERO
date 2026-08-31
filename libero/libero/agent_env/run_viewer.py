@@ -1095,6 +1095,9 @@ class RunRepository:
     def summary(self, run: RunFiles) -> dict[str, Any]:
         manifest = _read_json(run.directory / "run_manifest.json")
         result = _read_json(run.directory / "result.json")
+        private_evaluation = result.get("private_evaluation")
+        if not isinstance(private_evaluation, dict):
+            private_evaluation = {}
         session_metadata = _read_json(run.directory / "codex_session_metadata.json")
         experience_context_receipt = _read_json(
             run.directory / "experience_context_projection_receipt.json"
@@ -1136,6 +1139,11 @@ class RunRepository:
             "status": result.get("status") or "in_progress",
             "success": result.get("success"),
             "accepted_agent_steps": result.get("accepted_agent_steps"),
+            "completed_required_stage_count": private_evaluation.get(
+                "completed_required_stage_count"
+            ),
+            "required_stage_count": private_evaluation.get("required_stage_count"),
+            "stage_score_percent": private_evaluation.get("stage_score_percent"),
             "action_count": len(actions),
             "has_session": (run.directory / "codex_session.jsonl").is_file(),
             "session_id": session_metadata.get("session_id"),

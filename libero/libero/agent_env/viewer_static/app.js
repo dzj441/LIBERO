@@ -117,6 +117,23 @@ function summaryItem(label, value) {
 function renderRunHeader(detail) {
   const summary = detail.summary || {};
   const session = detail.session || {};
+  const completedStages = Number(summary.completed_required_stage_count);
+  const requiredStages = Number(summary.required_stage_count);
+  const orderedStageItems =
+    summary.completed_required_stage_count != null &&
+    summary.required_stage_count != null &&
+    Number.isFinite(completedStages) &&
+    Number.isFinite(requiredStages)
+      ? [
+          summaryItem(
+            "Ordered stages",
+            `${completedStages}/${requiredStages}` +
+              (Number.isFinite(Number(summary.stage_score_percent))
+                ? ` (${Number(summary.stage_score_percent).toFixed(1)}%)`
+                : ""),
+          ),
+        ]
+      : [];
   const success = summary.success === true;
   const failed = summary.success === false;
   elements.status.className = `status-pill ${success ? "success" : failed ? "failure" : ""}`;
@@ -134,6 +151,7 @@ function renderRunHeader(detail) {
     summaryItem("Context", summary.experience_context_id),
     summaryItem("Action interface", summary.action_interface),
     summaryItem("Robot steps", summary.accepted_agent_steps ?? summary.action_count),
+    ...orderedStageItems,
     summaryItem("Session", session.session_id || "unavailable"),
     summaryItem("CLI", session.cli_version),
     summaryItem("Tokens", formatInteger(session.token_usage?.total_tokens)),

@@ -129,7 +129,6 @@ def main() -> int:
         source_root,
         workspace,
         prompt,
-        run_id,
         icl_condition="none",
         action_interface=action_interface,
         control_transport="mcp",
@@ -138,7 +137,6 @@ def main() -> int:
         workspace / ".libero" / "episode.json",
         {
             "schema_version": "libero.agent_curriculum_workspace.v1",
-            "run_id": run_id,
             "episode_resumable": False,
             "run_mode": "multi_episode_curriculum",
             "episode_count": len(episodes),

@@ -98,14 +98,24 @@ class AgentEpisodeService:
         if self.finished:
             return
         self.state = "aborted"
-        self._write_result(
-            {
-                "schema_version": "libero.agent_run_result.v1",
-                "status": "aborted",
-                "reason": str(reason),
-                "finished_at": _utc_now(),
-            }
+        result = {
+            "schema_version": "libero.agent_run_result.v1",
+            "status": "aborted",
+            "reason": str(reason),
+            "finished_at": _utc_now(),
+        }
+        snapshot_method = getattr(
+            self.agent_env, "private_evaluation_snapshot", None
         )
+        private_evaluation = (
+            snapshot_method() if callable(snapshot_method) else None
+        )
+        if isinstance(private_evaluation, Mapping):
+            result["private_evaluation"] = deepcopy(
+                dict(private_evaluation)
+            )
+            self._write_private_stage_events(private_evaluation)
+        self._write_result(result)
 
     def close(self) -> None:
         self.agent_env.close()
@@ -164,6 +174,7 @@ class AgentEpisodeService:
             raise RuntimeError("finish requires one active episode")
         self._require_latest_observation(request)
         result = self.agent_env.finish_episode()
+        private_evaluation = result.get("private_evaluation")
         self.state = "finished"
         response = {
             "ok": True,
@@ -171,14 +182,34 @@ class AgentEpisodeService:
             "success": bool(result["success"]),
             "accepted_agent_steps": int(result["accepted_agent_steps"]),
         }
-        self._write_result(
-            {
-                "schema_version": "libero.agent_run_result.v1",
-                **deepcopy(response),
-                "finished_at": _utc_now(),
-            }
-        )
+        private_result = {
+            "schema_version": "libero.agent_run_result.v1",
+            **deepcopy(response),
+            "finished_at": _utc_now(),
+        }
+        if isinstance(private_evaluation, Mapping):
+            private_result["private_evaluation"] = deepcopy(
+                dict(private_evaluation)
+            )
+            self._write_private_stage_events(private_evaluation)
+        self._write_result(private_result)
         return response
+
+    def _write_private_stage_events(
+        self, private_evaluation: Mapping[str, Any]
+    ) -> None:
+        if self.private_run_directory is None:
+            return
+        events = private_evaluation.get("stage_events", ())
+        if not isinstance(events, Sequence) or isinstance(events, (str, bytes)):
+            return
+        path = self.private_run_directory / "private_stage_events.jsonl"
+        with path.open("w", encoding="utf-8") as stream:
+            for event in events:
+                if isinstance(event, Mapping):
+                    stream.write(json.dumps(_jsonable(event), sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
 
     def _publish(self, observation: Mapping[str, Any]) -> str:
         json_path = replace_current_public_observation(

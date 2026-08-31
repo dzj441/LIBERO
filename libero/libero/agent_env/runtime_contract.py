@@ -32,13 +32,14 @@ def build_server_ready_contract(
     initial_settle_control_steps: int,
     max_agent_steps: int | None,
     action_interface: ActionInterface | str,
+    task_source_fingerprint: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the exact host/server contract checked before Codex is launched."""
 
     profile = ObservationProfile.parse(profile)
     action_interface = ActionInterface.parse(action_interface)
     normalized_instruction = " ".join(str(task_instruction).split())
-    return {
+    contract = {
         "schema_version": SERVER_READY_SCHEMA_VERSION,
         "transport": "unix_socket",
         "protocol": "libero.agent_unix_socket.v1",
@@ -68,6 +69,9 @@ def build_server_ready_contract(
         "observation_retention": "current_only",
         "observation_publication": "atomic_replace_before_response",
     }
+    if task_source_fingerprint is not None:
+        contract["task_source_fingerprint"] = dict(task_source_fingerprint)
+    return contract
 
 
 def validate_server_ready_contract(

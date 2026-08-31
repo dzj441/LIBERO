@@ -434,6 +434,29 @@ def test_viewer_summary_reports_experience_context_id_from_receipt(
     assert summary["experience_context_id"] == "drawer_compositional_full"
 
 
+def test_viewer_summary_reports_private_ordered_stage_progress(tmp_path: Path) -> None:
+    repository, run, _workspace = _make_run(tmp_path)
+    _write_json(
+        run / "result.json",
+        {
+            "status": "finished",
+            "success": False,
+            "accepted_agent_steps": 12,
+            "private_evaluation": {
+                "completed_required_stage_count": 4,
+                "required_stage_count": 9,
+                "stage_score_percent": 44.444,
+            },
+        },
+    )
+
+    summary = repository.summary(repository.resolve_run("example"))
+
+    assert summary["completed_required_stage_count"] == 4
+    assert summary["required_stage_count"] == 9
+    assert summary["stage_score_percent"] == 44.444
+
+
 def test_viewer_never_exposes_raw_reasoning(tmp_path: Path) -> None:
     repository, _, _ = _make_run(tmp_path)
 

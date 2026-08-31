@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Protocol, Sequence
 
 import numpy as np
 
@@ -15,6 +15,16 @@ from .control import (
 )
 from .observation import MasterObservationCollector, TaskEntitySelection
 from .profiles import ObservationProfile, project_public_observation
+
+
+class PrivateEpisodeEvaluator(Protocol):
+    """Host-private ordered-task monitor; its details are never projected."""
+
+    def reset(self) -> None: ...
+
+    def observe(self, raw_observation: Mapping[str, Any]) -> None: ...
+
+    def result(self) -> dict[str, Any]: ...
 
 
 class LiberoAgentEnv:
@@ -41,6 +51,7 @@ class LiberoAgentEnv:
         private_control_step_callback: (
             Callable[[Mapping[str, Any]], None] | None
         ) = None,
+        private_episode_evaluator: PrivateEpisodeEvaluator | None = None,
     ) -> None:
         if initial_settle_control_steps < 0:
             raise ValueError("initial_settle_control_steps must be non-negative")
@@ -61,14 +72,15 @@ class LiberoAgentEnv:
             task_entities=task_entities,
         )
         self.private_control_step_callback = private_control_step_callback
+        self.private_episode_evaluator = private_episode_evaluator
         self.executor = BaseFrameOSCExecutor(
             env,
             control_config,
-            control_step_callback=private_control_step_callback,
+            control_step_callback=self._on_agent_control_step,
         )
         self.native_sequence_executor = NativeOSCSequenceExecutor(
             env,
-            control_step_callback=private_control_step_callback,
+            control_step_callback=self._on_agent_control_step,
         )
         self._started = False
         self._finished = False
@@ -87,6 +99,9 @@ class LiberoAgentEnv:
             raw_observation, _reward, _done, _info = self.env.step(hold_action)
             if self.private_control_step_callback is not None:
                 self.private_control_step_callback(raw_observation)
+
+        if self.private_episode_evaluator is not None:
+            self.private_episode_evaluator.reset()
 
         self._started = True
         self._finished = False
@@ -148,15 +163,33 @@ class LiberoAgentEnv:
 
     def finish_episode(self) -> dict[str, Any]:
         self._require_active()
-        success = bool(self.env.check_success())
+        bddl_final_goal_success = bool(self.env.check_success())
+        private_evaluation = None
+        success = bddl_final_goal_success
+        if self.private_episode_evaluator is not None:
+            private_evaluation = self.private_episode_evaluator.result()
+            private_evaluation["bddl_final_goal_success"] = (
+                bddl_final_goal_success
+            )
+            success = bool(private_evaluation["success"])
         self._finished = True
-        return {
+        result = {
             "success": success,
             "accepted_agent_steps": self._agent_step_index,
         }
+        if private_evaluation is not None:
+            result["private_evaluation"] = private_evaluation
+        return result
 
     def close(self) -> None:
         self.env.close()
+
+    def private_evaluation_snapshot(self) -> dict[str, Any] | None:
+        """Return host-private partial progress for aborted-run audit."""
+
+        if self.private_episode_evaluator is None:
+            return None
+        return self.private_episode_evaluator.result()
 
     def _public_observation(self, frame_index: int) -> dict[str, Any]:
         if self._latest_raw_observation is None:
@@ -173,3 +206,11 @@ class LiberoAgentEnv:
     def _require_agent_step_budget(self, limit: int | None) -> None:
         if limit is not None and self._agent_step_index >= limit:
             raise RuntimeError(f"agent step limit reached ({limit})")
+
+    def _on_agent_control_step(
+        self, raw_observation: Mapping[str, Any]
+    ) -> None:
+        if self.private_control_step_callback is not None:
+            self.private_control_step_callback(raw_observation)
+        if self.private_episode_evaluator is not None:
+            self.private_episode_evaluator.observe(raw_observation)

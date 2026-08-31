@@ -23,6 +23,12 @@ from .experience_context import (
     project_experience_context_bundle,
     validate_experience_context_bundle,
 )
+from .robomemarena import (
+    ROBOMEMARENA_SUITE,
+    get_robomemarena_task_spec,
+    make_robomemarena_agent_env,
+    robomemarena_source_fingerprint,
+)
 
 __all__ = [
     "EEFCommand",
@@ -44,4 +50,8 @@ __all__ = [
     "validate_experience_context_bundle",
     "validate_p4_replay_master",
     "write_public_observation",
+    "ROBOMEMARENA_SUITE",
+    "get_robomemarena_task_spec",
+    "make_robomemarena_agent_env",
+    "robomemarena_source_fingerprint",
 ]

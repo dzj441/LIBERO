@@ -20,7 +20,36 @@ from typing import Any, Mapping
 os.environ.setdefault("MUJOCO_GL", "egl")
 os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 
-from libero.libero.agent_env import make_libero_agent_env  # noqa: E402
+SOURCE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _early_option(name: str) -> str | None:
+    try:
+        return sys.argv[sys.argv.index(name) + 1]
+    except (ValueError, IndexError):
+        return None
+
+
+if _early_option("--suite") == "robomemarena":
+    checkout = _early_option("--robomemarena-root")
+    if checkout is None:
+        raise ValueError(
+            "--suite robomemarena requires --robomemarena-root"
+        )
+    from scripts.robomemarena_bootstrap import (  # noqa: E402
+        activate_robomemarena_core,
+    )
+
+    activate_robomemarena_core(
+        checkout_root=checkout,
+        source_root=SOURCE_ROOT,
+    )
+
+from libero.libero.agent_env import (  # noqa: E402
+    make_libero_agent_env,
+    make_robomemarena_agent_env,
+    robomemarena_source_fingerprint,
+)
 from libero.libero.agent_env.control import ActionInterface  # noqa: E402
 from libero.libero.agent_env.private_recording import (  # noqa: E402
     PrivateRolloutVideoRecorder,
@@ -101,6 +130,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--socket", type=Path, required=True)
     parser.add_argument("--run-directory", type=Path, required=True)
     parser.add_argument("--launcher-pid", type=int, required=True)
+    parser.add_argument("--robomemarena-root", type=Path)
     return parser.parse_args()
 
 
@@ -120,19 +150,41 @@ def main() -> int:
         socket_path.unlink()
 
     recorder = PrivateRolloutVideoRecorder(run_directory / "continuous_video.mp4")
-    agent_env = make_libero_agent_env(
-        suite=args.suite,
-        task_id=args.task_id,
-        init_state_id=args.init_state_id,
-        profile=args.profile,
-        seed=args.seed,
-        camera_height=args.resolution,
-        camera_width=args.resolution,
-        render_gpu_device_id=args.render_gpu_device_id,
-        initial_settle_control_steps=args.initial_settle_control_steps,
-        max_agent_steps=args.max_agent_steps,
-        private_control_step_callback=recorder.append_raw_observation,
-    )
+    task_source_fingerprint = None
+    common_environment_arguments = {
+        "task_id": args.task_id,
+        "init_state_id": args.init_state_id,
+        "profile": args.profile,
+        "seed": args.seed,
+        "camera_height": args.resolution,
+        "camera_width": args.resolution,
+        "render_gpu_device_id": args.render_gpu_device_id,
+        "initial_settle_control_steps": args.initial_settle_control_steps,
+        "max_agent_steps": args.max_agent_steps,
+        "private_control_step_callback": recorder.append_raw_observation,
+    }
+    if args.suite == "robomemarena":
+        if args.robomemarena_root is None:
+            raise ValueError(
+                "--suite robomemarena requires --robomemarena-root"
+            )
+        task_source_fingerprint = robomemarena_source_fingerprint(
+            args.robomemarena_root,
+            task_id=args.task_id,
+        )
+        agent_env = make_robomemarena_agent_env(
+            checkout_root=args.robomemarena_root,
+            **common_environment_arguments,
+        )
+    else:
+        if args.robomemarena_root is not None:
+            raise ValueError(
+                "--robomemarena-root is valid only for --suite robomemarena"
+            )
+        agent_env = make_libero_agent_env(
+            suite=args.suite,
+            **common_environment_arguments,
+        )
     service = AgentEpisodeService(
         agent_env,
         workspace_directory=workspace,
@@ -154,6 +206,7 @@ def main() -> int:
         initial_settle_control_steps=agent_env.initial_settle_control_steps,
         max_agent_steps=agent_env.max_agent_steps,
         action_interface=service.action_interface,
+        task_source_fingerprint=task_source_fingerprint,
     )
     server: EpisodeUnixServer | None = None
     interrupted_reason = "server_stopped_before_finish"

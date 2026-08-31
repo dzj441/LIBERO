@@ -12,6 +12,7 @@ from scripts.launch_agent_episode import (
     build_codex_command,
     build_task_prompt,
     parse_args,
+    _task_instruction,
 )
 
 
@@ -90,6 +91,15 @@ def test_launcher_defaults_to_mcp_native_osc(monkeypatch):
     args = parse_args()
     assert args.control_transport == "mcp"
     assert args.action_interface == ActionInterface.NATIVE_OSC_SEQUENCE.value
+
+
+def test_robomemarena_task_instruction_resolves_without_private_stage_hints():
+    instruction = _task_instruction("robomemarena", 4)
+    assert instruction == (
+        "Open and close all drawers in order to check. Put butter into the "
+        "drawer that already contains an object."
+    )
+    assert "top" not in instruction.lower()
 
 
 def test_prompt_is_nonstrategic_and_documents_delta_gripper_workflow():
@@ -177,7 +187,6 @@ def test_native_workspace_exposes_only_the_selected_wire_operation(tmp_path):
         source_root,
         workspace,
         "prompt",
-        "test-run",
         icl_condition="none",
         action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
     )
@@ -187,6 +196,7 @@ def test_native_workspace_exposes_only_the_selected_wire_operation(tmp_path):
     assert episode["max_native_osc_micro_steps_per_submission"] == 20
     assert (workspace / "bin/liberoctl").stat().st_mode & 0o111
     assert "seed" not in episode
+    assert "run_id" not in episode
     assert "server_ready" not in episode
     assert not (workspace / "run_manifest.json").exists()
 
@@ -199,7 +209,6 @@ def test_mcp_workspace_exposes_adapter_without_liberoctl(tmp_path):
         source_root,
         workspace,
         "prompt",
-        "test-run",
         icl_condition="none",
         action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
         control_transport="mcp",
@@ -211,6 +220,7 @@ def test_mcp_workspace_exposes_adapter_without_liberoctl(tmp_path):
         "finish_episode",
     ]
     assert episode["control_transport"] == "mcp"
+    assert "run_id" not in episode
     assert (workspace / "bin/libero_mcp_server").stat().st_mode & 0o111
     assert not (workspace / "bin/liberoctl").exists()
 
@@ -223,7 +233,6 @@ def test_experience_context_workspace_names_only_the_public_context_root(tmp_pat
         source_root,
         workspace,
         "prompt",
-        "test-run",
         icl_condition="experience_context",
         action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
         control_transport="mcp",

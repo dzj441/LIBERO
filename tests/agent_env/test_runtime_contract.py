@@ -58,6 +58,20 @@ def test_ready_contract_rejects_host_server_drift_with_safe_field_names():
         validate_server_ready_contract(actual, expected)
 
 
+def test_ready_contract_commits_optional_external_task_source_fingerprint():
+    fingerprint = {
+        "schema_version": "libero.robomemarena_source.v1",
+        "source_commit": "a" * 40,
+        "bddl_sha256": "b" * 64,
+    }
+    contract = _contract(task_source_fingerprint=fingerprint)
+    assert contract["task_source_fingerprint"] == fingerprint
+    changed = _contract(
+        task_source_fingerprint={**fingerprint, "bddl_sha256": "c" * 64}
+    )
+    assert canonical_json_sha256(contract) != canonical_json_sha256(changed)
+
+
 def test_curriculum_ready_contract_commits_order_without_plaintext_tasks():
     episodes = [
         {

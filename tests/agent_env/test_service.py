@@ -193,6 +193,76 @@ def test_service_marks_unfinished_episode_aborted(tmp_path):
     assert result["reason"] == "codex_process_exited_before_finish"
 
 
+def test_service_keeps_stage_details_private_at_finish(tmp_path):
+    class _PrivatelyEvaluatedEnv(_FakeAgentEnv):
+        def finish_episode(self):
+            return {
+                "success": True,
+                "accepted_agent_steps": 1,
+                "private_evaluation": {
+                    "success": True,
+                    "stage_score_percent": 50.0,
+                    "stage_events": [
+                        {"stage_name": "private_stage", "control_step": 7}
+                    ],
+                },
+            }
+
+    workspace = tmp_path / "workspace"
+    run_directory = tmp_path / "private"
+    service = AgentEpisodeService(
+        _PrivatelyEvaluatedEnv(),
+        workspace_directory=workspace,
+        current_observation_directory=(
+            workspace / "benchmark_inputs" / "current_observation"
+        ),
+        private_run_directory=run_directory,
+    )
+    started = service.handle({"command": "start"})
+    response = service.handle(
+        {
+            "command": "finish",
+            "observation_id": started["observation_id"],
+        }
+    )
+    assert "private_evaluation" not in response
+    private_result = json.loads((run_directory / "result.json").read_text())
+    assert private_result["private_evaluation"]["stage_score_percent"] == 50.0
+    private_event = json.loads(
+        (run_directory / "private_stage_events.jsonl").read_text()
+    )
+    assert private_event["stage_name"] == "private_stage"
+
+
+def test_aborted_run_preserves_private_partial_stage_progress(tmp_path):
+    class _PartiallyEvaluatedEnv(_FakeAgentEnv):
+        def private_evaluation_snapshot(self):
+            return {
+                "success": False,
+                "stage_score_percent": 25.0,
+                "stage_events": [
+                    {"stage_name": "first_private_stage", "control_step": 3}
+                ],
+            }
+
+    workspace = tmp_path / "workspace"
+    run_directory = tmp_path / "private"
+    service = AgentEpisodeService(
+        _PartiallyEvaluatedEnv(),
+        workspace_directory=workspace,
+        current_observation_directory=(
+            workspace / "benchmark_inputs" / "current_observation"
+        ),
+        private_run_directory=run_directory,
+    )
+    service.handle({"command": "start"})
+    service.finalize_aborted("agent_process_exited")
+    result = json.loads((run_directory / "result.json").read_text())
+    assert result["status"] == "aborted"
+    assert result["private_evaluation"]["stage_score_percent"] == 25.0
+    assert (run_directory / "private_stage_events.jsonl").is_file()
+
+
 def test_multi_episode_service_sequences_children_and_records_final_target(tmp_path):
     workspace = tmp_path / "workspace"
     run_directory = tmp_path / "private"
