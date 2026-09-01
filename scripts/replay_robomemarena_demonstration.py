@@ -1,0 +1,226 @@
+#!/usr/bin/env python3
+"""Replay one seeded RoboMemArena trajectory and publish a verified P4 master."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+import subprocess
+from types import SimpleNamespace
+from typing import Any
+
+import numpy as np
+
+
+os.environ.setdefault("MUJOCO_GL", "egl")
+os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dataset", type=Path, required=True)
+    parser.add_argument("--robomemarena-root", type=Path, default=Path("../RoboMemArena"))
+    parser.add_argument("--task-id", type=int, default=4)
+    parser.add_argument("--p4-master-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--camera-height", type=int, default=256)
+    parser.add_argument("--camera-width", type=int, default=256)
+    parser.add_argument("--render-gpu-device-id", type=int, default=-1)
+    parser.add_argument("--save-video", action="store_true")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    source_root = Path(__file__).resolve().parents[1]
+    checkout_root = args.robomemarena_root.expanduser().resolve()
+
+    # RoboMemArena owns the simulator package and assets. It must be activated
+    # before importing this repository's agent modules under the shared package.
+    from scripts.robomemarena_bootstrap import activate_robomemarena_core
+
+    activate_robomemarena_core(
+        checkout_root=checkout_root,
+        source_root=source_root,
+    )
+
+    from libero.libero.agent_env.fixed_demo import P4ReplayMasterRecorder
+    from libero.libero.agent_env.private_recording import PrivateRolloutVideoRecorder
+    from libero.libero.agent_env.robomemarena import (
+        RoboMemArenaTask4Evaluator,
+        get_robomemarena_task_spec,
+        robomemarena_source_fingerprint,
+    )
+    from libero.libero.agent_env.robomemarena_demo import (
+        load_robomemarena_full_trajectory,
+    )
+    from libero.libero.envs import OffScreenRenderEnv
+
+    trajectory = load_robomemarena_full_trajectory(
+        args.dataset, expected_task_id=args.task_id
+    )
+    spec = get_robomemarena_task_spec(args.task_id)
+    task_source = robomemarena_source_fingerprint(
+        checkout_root, task_id=args.task_id
+    )
+    dataset_source = _dataset_source_fingerprint(trajectory.dataset_path)
+    output_dir = args.output_dir.expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    master_dir = args.p4_master_dir.expanduser().resolve()
+    if master_dir.exists() or master_dir.is_symlink():
+        raise FileExistsError(f"P4 replay master already exists: {master_dir}")
+
+    # Official RoboMemArena evaluation seeds NumPy and the environment before
+    # reset. The dataset filename records this seed instead of a MuJoCo state.
+    np.random.seed(trajectory.seed)
+    env = OffScreenRenderEnv(
+        bddl_file_name=os.fspath(checkout_root / spec.bddl_relative_path),
+        camera_names=["agentview", "robot0_eye_in_hand"],
+        camera_heights=args.camera_height,
+        camera_widths=args.camera_width,
+        camera_depths=True,
+        camera_segmentations="instance",
+        use_object_obs=True,
+        ignore_done=True,
+        initialization_noise=None,
+        render_gpu_device_id=args.render_gpu_device_id,
+        horizon=len(trajectory.actions) + 1,
+        control_freq=20,
+        reward_shaping=True,
+    )
+    env.seed(trajectory.seed)
+    raw_observation = env.reset()
+    initial_state = np.asarray(env.get_sim_state(), dtype=np.float64)
+    episode = SimpleNamespace(
+        dataset_path=trajectory.dataset_path,
+        demo_key=trajectory.demo_key,
+        bddl_file=checkout_root / spec.bddl_relative_path,
+        actions=trajectory.actions,
+        init_state=initial_state,
+        task_instruction=spec.instruction,
+        problem_name=str(env.env.parsed_problem.get("problem_name", "robomemarena_task4")),
+        env_name="RoboMemArena-OffScreenRenderEnv",
+        robots=("Panda",),
+        controller="OSC_POSE",
+        control_freq=20,
+        init_state_source=f"seeded_reset:{trajectory.seed}",
+    )
+    recorder = P4ReplayMasterRecorder(
+        master_dir,
+        episode,
+        camera_height=args.camera_height,
+        camera_width=args.camera_width,
+        initial_frame_after_settle=False,
+    )
+    video = (
+        PrivateRolloutVideoRecorder(output_dir / "replay.mp4")
+        if args.save_video
+        else None
+    )
+    evaluator = RoboMemArenaTask4Evaluator(env)
+    evaluator.reset()
+    first_success_step: int | None = None
+    success_trace: list[bool] = []
+    published = False
+    try:
+        recorder.capture(env, raw_observation, 0, None)
+        if video is not None:
+            video.append_raw_observation(raw_observation)
+        for action_index, action in enumerate(trajectory.actions):
+            raw_observation, _, _, _ = env.step(action)
+            evaluator.observe(raw_observation)
+            success = bool(evaluator.result()["success"])
+            success_trace.append(success)
+            if success and first_success_step is None:
+                first_success_step = action_index
+            recorder.capture(
+                env,
+                raw_observation,
+                action_index + 1,
+                action_index,
+            )
+            if video is not None:
+                video.append_raw_observation(raw_observation)
+
+        private_evaluation = evaluator.result()
+        bddl_success = bool(env.check_success())
+        verified = bool(private_evaluation["success"] and bddl_success)
+        final_streak = _ending_true_streak(success_trace)
+        report: dict[str, Any] = {
+            "schema_version": "libero.robomemarena_replay.v1",
+            "verified_success": verified,
+            "final_success": verified,
+            "first_success_step": first_success_step,
+            "final_success_streak": final_streak,
+            "required_stable_success_steps": 1,
+            "private_evaluation": {
+                **private_evaluation,
+                "bddl_final_goal_success": bddl_success,
+            },
+            "source": {
+                "dataset": os.fspath(trajectory.dataset_path),
+                "dataset_seed": trajectory.seed,
+                "dataset_recorded_instruction": trajectory.recorded_instruction,
+                "dataset_source": dataset_source,
+                "task_source": task_source,
+            },
+            "capture": {
+                "profile": "level4",
+                "frame_count": len(trajectory.actions) + 1,
+                "transition_count": len(trajectory.actions),
+                "initial_state_source": episode.init_state_source,
+                "video": os.fspath((output_dir / "replay.mp4").resolve())
+                if video is not None
+                else None,
+            },
+        }
+        if not verified:
+            raise RuntimeError("RoboMemArena replay did not pass both private checkers")
+        master_receipt = recorder.finalize(report)
+        published = True
+        report["p4_master"] = master_receipt
+        _write_json(output_dir / "replay_report.json", report)
+        print(json.dumps(report, indent=2, sort_keys=True), flush=True)
+        return 0
+    finally:
+        if video is not None:
+            video.close()
+        env.close()
+        if not published:
+            recorder.abort()
+
+
+def _dataset_source_fingerprint(dataset: Path) -> dict[str, str]:
+    root = subprocess.check_output(
+        ("git", "-C", os.fspath(dataset.parent), "rev-parse", "--show-toplevel"),
+        text=True,
+    ).strip()
+    commit = subprocess.check_output(
+        ("git", "-C", root, "rev-parse", "HEAD"), text=True
+    ).strip()
+    relative = os.fspath(dataset.relative_to(Path(root)))
+    subprocess.run(
+        ("git", "-C", root, "ls-files", "--error-unmatch", relative),
+        check=True,
+        stdout=subprocess.DEVNULL,
+    )
+    return {"repository_commit": commit, "repository_relative_path": relative}
+
+
+def _ending_true_streak(values: list[bool]) -> int:
+    count = 0
+    for value in reversed(values):
+        if not value:
+            break
+        count += 1
+    return count
+
+
+def _write_json(path: Path, value: dict[str, Any]) -> None:
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

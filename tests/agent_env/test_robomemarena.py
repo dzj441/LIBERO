@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 import subprocess
 
+import h5py
 import numpy as np
 import pytest
 
@@ -8,6 +9,9 @@ from libero.libero.agent_env.robomemarena import (
     RoboMemArenaTask4Evaluator,
     get_robomemarena_task_spec,
     robomemarena_source_fingerprint,
+)
+from libero.libero.agent_env.robomemarena_demo import (
+    load_robomemarena_full_trajectory,
 )
 
 
@@ -127,3 +131,47 @@ def test_source_fingerprint_requires_clean_versioned_task_inputs(tmp_path):
     paths[0].write_text("modified\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="tracked modifications"):
         robomemarena_source_fingerprint(root, task_id=4)
+
+
+def _write_full_trajectory(path, *, action_value=0.1):
+    with h5py.File(path, "w") as handle:
+        demo = handle.create_group("data/demo_0")
+        demo.attrs["language_instruction"] = "open and close all drawers"
+        demo.create_dataset(
+            "actions",
+            data=np.full((2, 7), action_value, dtype=np.float64),
+        )
+        observations = demo.create_group("obs")
+        observations.create_dataset(
+            "agentview_rgb", data=np.zeros((2, 4, 4, 3), dtype=np.uint8)
+        )
+        observations.create_dataset(
+            "eye_in_hand_rgb", data=np.zeros((2, 4, 4, 3), dtype=np.uint8)
+        )
+        observations.create_dataset("ee_pos", data=np.zeros((2, 3)))
+        observations.create_dataset("ee_ori", data=np.zeros((2, 3)))
+        observations.create_dataset("gripper_states", data=np.zeros((2, 2)))
+        observations.create_dataset("joint_states", data=np.zeros((2, 7)))
+
+
+def test_full_trajectory_loader_recovers_seed_and_validates_alignment(tmp_path):
+    dataset = tmp_path / "example_full_seed123_task4.hdf5"
+    _write_full_trajectory(dataset)
+
+    trajectory = load_robomemarena_full_trajectory(
+        dataset, expected_task_id=4
+    )
+
+    assert trajectory.task_id == 4
+    assert trajectory.seed == 123
+    assert trajectory.actions.shape == (2, 7)
+    assert trajectory.observation_count == 2
+    assert trajectory.recorded_instruction == "open and close all drawers"
+
+
+def test_full_trajectory_loader_rejects_out_of_range_actions(tmp_path):
+    dataset = tmp_path / "example_full_seed123_task4.hdf5"
+    _write_full_trajectory(dataset, action_value=1.1)
+
+    with pytest.raises(ValueError, match="finite normalized OSC"):
+        load_robomemarena_full_trajectory(dataset, expected_task_id=4)

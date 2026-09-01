@@ -145,10 +145,10 @@ def main() -> int:
         )
     task_source_fingerprint = None
     if args.suite == ROBOMEMARENA_SUITE:
-        if args.icl != "none":
+        if args.icl not in {"none", "fixed_demo"}:
             raise ValueError(
-                "RoboMemArena adapter v1 supports P1-P4 without ICL; "
-                "demonstration projection is a later integration"
+                "RoboMemArena supports no ICL or one verified fixed demo; "
+                "experience-context projection is not yet integrated"
             )
         args.robomemarena_root = (
             args.robomemarena_root or source_root.parent / "RoboMemArena"

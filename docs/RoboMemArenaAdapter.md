@@ -114,10 +114,43 @@ PYTHONPATH=. ../miniconda3/envs/libero/bin/python scripts/launch_agent_episode.p
   --codex-effort high
 ```
 
-The initial adapter deliberately rejects RoboMemArena ICL. Expert HDF5 from
-the current ModelScope release should be downloaded to the shared data disk,
-versioned, replay-verified, and projected in a separate milestone rather than
-mixed into the task-source bring-up.
+RoboMemArena supports either no ICL or one replay-verified fixed demonstration.
+The downloaded HDF5 is never copied directly into an Agent workspace. It must
+first be physically replayed against the fingerprinted task source and captured
+again through the benchmark's P4 allowlist.
+
+Task 4 seed 100 has been replayed with all 1,020 native OSC actions. It passed
+all eight required ordered stages, the optional final drawer close, and the
+ordinary BDDL checker. The resulting P4 master contains 1,021 causal frames and
+is stored at:
+
+```text
+outputs/replay/robomemarena_task4_seed100_p4_master_v1/
+```
+
+Generate the master reproducibly with:
+
+```bash
+python scripts/replay_robomemarena_demonstration.py \
+  --dataset /path/to/place_butter_into_drawer_have_object_full_seed100_task4.hdf5 \
+  --robomemarena-root ../RoboMemArena \
+  --task-id 4 \
+  --p4-master-dir outputs/replay/robomemarena_task4_seed100_p4_master_v1 \
+  --output-dir outputs/replay/robomemarena_task4_seed100_p4_replay_v1 \
+  --render-gpu-device-id 0 \
+  --save-video
+```
+
+The source HDF5 lacks metric depth, calibration, and a serialized MuJoCo
+initial state. Its filename seed is therefore replayed using RoboMemArena's
+official NumPy-plus-environment seeding convention; P4 depth and calibration
+come from the replayed simulator, not from the downloaded file. Publication is
+refused unless both the ordered private evaluator and BDDL checker succeed.
+
+An audit of the projected Agent bundle found no source path, dataset or scene
+seed, Git fingerprint, private object instance name, reward, goal state,
+ordered-stage progress, or checker field. The public bundle contains anonymous
+initial task-entity annotations, P4 observations, and normalized OSC actions.
 
 ## P4 validation pilot
 
@@ -167,9 +200,9 @@ ModelScope repository into the shared dataset disk:
 Only `4_drawer_butter_dataset/full_trajectory/*.hdf5` is selected. The
 download process clears all HTTP, HTTPS, and ALL proxy variables and also
 disables Git's HTTP/HTTPS proxy settings. Downloading an HDF5 file is not
-sufficient to expose it to an Agent: a later milestone must freeze its dataset
-commit, replay-verify it against the matching BDDL/assets, and project it
-through the public P1--P4 demonstration schema.
+sufficient to expose it to an Agent: the dataset commit is frozen, the selected
+trajectory is replay-verified against the matching BDDL/assets, and only its
+public P1--P4 projection is published.
 
 ## Version caveat
 

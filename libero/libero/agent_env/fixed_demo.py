@@ -57,6 +57,7 @@ class P4ReplayMasterRecorder:
         *,
         camera_height: int,
         camera_width: int,
+        initial_frame_after_settle: bool = True,
     ) -> None:
         self.destination = Path(destination).expanduser().resolve()
         if self.destination.exists() or self.destination.is_symlink():
@@ -73,6 +74,7 @@ class P4ReplayMasterRecorder:
         self.episode = episode
         self.camera_height = int(camera_height)
         self.camera_width = int(camera_width)
+        self.initial_frame_after_settle = bool(initial_frame_after_settle)
         self._collector: Any | None = None
         self._frames: list[dict[str, Any]] = []
         self._published = False
@@ -170,7 +172,7 @@ class P4ReplayMasterRecorder:
                 "camera_width": self.camera_width,
                 "frame_count": len(self._frames),
                 "transition_count": len(actions),
-                "initial_frame_after_settle": True,
+                "initial_frame_after_settle": self.initial_frame_after_settle,
                 "post_action_frames_are_causal": True,
                 "frames": self._frames,
                 "trajectory": _artifact_record(

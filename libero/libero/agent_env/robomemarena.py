@@ -307,6 +307,9 @@ def make_robomemarena_agent_env(
             "factory-managed env kwargs cannot be overridden: "
             f"{sorted(conflicts)}"
         )
+    # RoboMemArena's official evaluator seeds NumPy as well as the wrapped
+    # environment before reset. Keep the same deterministic scene contract.
+    np.random.seed(seed)
     env = OffScreenRenderEnv(
         bddl_file_name=os.fspath(bddl_path),
         camera_names=["agentview", "robot0_eye_in_hand"],
