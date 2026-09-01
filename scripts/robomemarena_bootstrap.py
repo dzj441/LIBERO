@@ -1,25 +1,39 @@
-"""Load the RoboMemArena LIBERO fork before importing the local agent stack."""
+"""Load the frozen RoboMemArena compatibility core before the agent stack."""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 
 
 def activate_robomemarena_core(
-    *, checkout_root: str | Path, source_root: str | Path
-) -> None:
+    *,
+    source_root: str | Path,
+    checkout_root: str | Path | None = None,
+) -> Path:
     """Use RoboMemArena's simulator assets with this repository's agent_env.
 
-    RoboMemArena ships a fork under the same ``libero`` package name.  The
-    server is a fresh process, so it can load that fork first and then extend
-    the package search path with this repository's ``agent_env`` modules.  The
-    Codex process never imports the fork or receives its private raw state.
+    By default a lightweight merged package is assembled on the system temp
+    disk. Unchanged files are symlinked from this checkout and only the frozen
+    RoboMemArena overrides vendored under ``agent_env`` are copied. An external
+    checkout remains an explicit development override, but is no longer a
+    runtime dependency.
+
+    The server is a fresh process, so it can load the merged fork first and
+    then extend the package search path with this repository's ``agent_env``
+    modules. The Codex process never imports the fork or receives private raw
+    simulator state.
     """
 
-    checkout = Path(checkout_root).expanduser().resolve()
     source = Path(source_root).resolve()
-    fork_root = checkout / "evaluation_benchmark" / "libero_fork"
+    if checkout_root is None:
+        fork_root = _build_vendored_fork(source)
+    else:
+        checkout = Path(checkout_root).expanduser().resolve()
+        fork_root = checkout / "evaluation_benchmark" / "libero_fork"
     if not (fork_root / "libero" / "envs").is_dir():
         raise FileNotFoundError(
             f"RoboMemArena LIBERO fork is unavailable under {fork_root}"
@@ -46,3 +60,79 @@ def activate_robomemarena_core(
         libero.__path__.append(local_outer)
     if local_inner not in core.__path__:
         core.__path__.append(local_inner)
+    return fork_root
+
+
+def _build_vendored_fork(source_root: Path) -> Path:
+    base_package = source_root / "libero" / "libero"
+    override_package = (
+        base_package / "agent_env" / "robomemarena_vendor" / "core"
+    )
+    if not override_package.is_dir():
+        raise FileNotFoundError(
+            f"vendored RoboMemArena compatibility core is missing: "
+            f"{override_package}"
+        )
+
+    fork_root = Path(tempfile.mkdtemp(prefix="libero-robomemarena-core-"))
+    merged_package = fork_root / "libero"
+    _symlink_tree(base_package, merged_package)
+    _overlay_tree(override_package, merged_package)
+    return fork_root
+
+
+def _symlink_tree(source: Path, destination: Path) -> None:
+    for directory, directory_names, file_names in os.walk(source):
+        directory_names[:] = [
+            name for name in directory_names if name != "__pycache__"
+        ]
+        source_directory = Path(directory)
+        relative = source_directory.relative_to(source)
+        destination_directory = destination / relative
+        destination_directory.mkdir(parents=True, exist_ok=True)
+        for filename in file_names:
+            if filename.endswith((".pyc", ".pyo")):
+                continue
+            source_file = source_directory / filename
+            destination_file = destination_directory / filename
+            destination_file.symlink_to(source_file.resolve())
+
+
+def _overlay_tree(source: Path, destination: Path) -> None:
+    for directory, directory_names, file_names in os.walk(
+        source, followlinks=False
+    ):
+        source_directory = Path(directory)
+        relative = source_directory.relative_to(source)
+        destination_directory = destination / relative
+        destination_directory.mkdir(parents=True, exist_ok=True)
+        traversed_directories: list[str] = []
+        for name in directory_names:
+            source_child = source_directory / name
+            if name == "__pycache__":
+                continue
+            if source_child.is_symlink():
+                destination_child = destination_directory / name
+                if (
+                    destination_child.exists()
+                    or destination_child.is_symlink()
+                ):
+                    if destination_child.is_dir() and not destination_child.is_symlink():
+                        shutil.rmtree(destination_child)
+                    else:
+                        destination_child.unlink()
+                destination_child.symlink_to(os.readlink(source_child))
+            else:
+                traversed_directories.append(name)
+        directory_names[:] = traversed_directories
+        for filename in file_names:
+            if filename.endswith((".pyc", ".pyo")):
+                continue
+            source_file = source_directory / filename
+            destination_file = destination_directory / filename
+            if destination_file.exists() or destination_file.is_symlink():
+                destination_file.unlink()
+            if source_file.is_symlink():
+                destination_file.symlink_to(os.readlink(source_file))
+            else:
+                shutil.copy2(source_file, destination_file)

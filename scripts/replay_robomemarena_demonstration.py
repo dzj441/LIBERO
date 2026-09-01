@@ -21,7 +21,14 @@ os.environ.setdefault("PYOPENGL_PLATFORM", "egl")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", type=Path, required=True)
-    parser.add_argument("--robomemarena-root", type=Path, default=Path("../RoboMemArena"))
+    parser.add_argument(
+        "--robomemarena-root",
+        type=Path,
+        help=(
+            "Optional external RoboMemArena checkout; the frozen "
+            "in-repository compatibility subset is the default"
+        ),
+    )
     parser.add_argument("--task-id", type=int, default=4)
     parser.add_argument("--p4-master-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -35,7 +42,11 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     source_root = Path(__file__).resolve().parents[1]
-    checkout_root = args.robomemarena_root.expanduser().resolve()
+    checkout_root = (
+        None
+        if args.robomemarena_root is None
+        else args.robomemarena_root.expanduser().resolve()
+    )
 
     # RoboMemArena owns the simulator package and assets. It must be activated
     # before importing this repository's agent modules under the shared package.
@@ -49,8 +60,9 @@ def main() -> int:
     from libero.libero.agent_env.fixed_demo import P4ReplayMasterRecorder
     from libero.libero.agent_env.private_recording import PrivateRolloutVideoRecorder
     from libero.libero.agent_env.robomemarena import (
-        RoboMemArenaTask4Evaluator,
+        RoboMemArenaOrderedStageEvaluator,
         get_robomemarena_task_spec,
+        robomemarena_bddl_path,
         robomemarena_source_fingerprint,
     )
     from libero.libero.agent_env.robomemarena_demo import (
@@ -65,6 +77,9 @@ def main() -> int:
     task_source = robomemarena_source_fingerprint(
         checkout_root, task_id=args.task_id
     )
+    bddl_path = robomemarena_bddl_path(
+        checkout_root, task_id=args.task_id
+    )
     dataset_source = _dataset_source_fingerprint(trajectory.dataset_path)
     output_dir = args.output_dir.expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -76,7 +91,7 @@ def main() -> int:
     # reset. The dataset filename records this seed instead of a MuJoCo state.
     np.random.seed(trajectory.seed)
     env = OffScreenRenderEnv(
-        bddl_file_name=os.fspath(checkout_root / spec.bddl_relative_path),
+        bddl_file_name=os.fspath(bddl_path),
         camera_names=["agentview", "robot0_eye_in_hand"],
         camera_heights=args.camera_height,
         camera_widths=args.camera_width,
@@ -96,11 +111,15 @@ def main() -> int:
     episode = SimpleNamespace(
         dataset_path=trajectory.dataset_path,
         demo_key=trajectory.demo_key,
-        bddl_file=checkout_root / spec.bddl_relative_path,
+        bddl_file=bddl_path,
         actions=trajectory.actions,
         init_state=initial_state,
         task_instruction=spec.instruction,
-        problem_name=str(env.env.parsed_problem.get("problem_name", "robomemarena_task4")),
+        problem_name=str(
+            env.env.parsed_problem.get(
+                "problem_name", f"robomemarena_task{args.task_id}"
+            )
+        ),
         env_name="RoboMemArena-OffScreenRenderEnv",
         robots=("Panda",),
         controller="OSC_POSE",
@@ -119,7 +138,9 @@ def main() -> int:
         if args.save_video
         else None
     )
-    evaluator = RoboMemArenaTask4Evaluator(env)
+    evaluator = RoboMemArenaOrderedStageEvaluator(
+        env, task_id=args.task_id
+    )
     evaluator.reset()
     first_success_step: int | None = None
     success_trace: list[bool] = []
@@ -146,7 +167,10 @@ def main() -> int:
 
         private_evaluation = evaluator.result()
         bddl_success = bool(env.check_success())
-        verified = bool(private_evaluation["success"] and bddl_success)
+        # RoboMemArena's ordered checker is the authoritative task contract.
+        # Its counting tasks intentionally define success by completed pour
+        # events even when the ordinary BDDL terminal-state proxy is false.
+        verified = bool(private_evaluation["success"])
         final_streak = _ending_true_streak(success_trace)
         report: dict[str, Any] = {
             "schema_version": "libero.robomemarena_replay.v1",
@@ -155,6 +179,7 @@ def main() -> int:
             "first_success_step": first_success_step,
             "final_success_streak": final_streak,
             "required_stable_success_steps": 1,
+            "verification_authority": "robomemarena_ordered_stage_checker",
             "private_evaluation": {
                 **private_evaluation,
                 "bddl_final_goal_success": bddl_success,
@@ -163,6 +188,12 @@ def main() -> int:
                 "dataset": os.fspath(trajectory.dataset_path),
                 "dataset_seed": trajectory.seed,
                 "dataset_recorded_instruction": trajectory.recorded_instruction,
+                "raw_gripper_action_range": list(
+                    trajectory.raw_gripper_action_range
+                ),
+                "gripper_action_clipped_to_contract": (
+                    trajectory.gripper_action_clipped_to_contract
+                ),
                 "dataset_source": dataset_source,
                 "task_source": task_source,
             },
@@ -176,8 +207,14 @@ def main() -> int:
                 else None,
             },
         }
+        # Preserve diagnostics for failed certification as well as success.
+        # Without this receipt, ordered-stage failure and a BDDL final-goal
+        # mismatch collapse into the same generic exception.
+        _write_json(output_dir / "replay_report.json", report)
         if not verified:
-            raise RuntimeError("RoboMemArena replay did not pass both private checkers")
+            raise RuntimeError(
+                "RoboMemArena replay did not pass the ordered-stage checker"
+            )
         master_receipt = recorder.finalize(report)
         published = True
         report["p4_master"] = master_receipt

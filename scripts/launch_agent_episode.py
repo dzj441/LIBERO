@@ -113,8 +113,8 @@ def parse_args() -> argparse.Namespace:
         "--robomemarena-root",
         type=Path,
         help=(
-            "Clean external RoboMemArena checkout; defaults to the sibling "
-            "RoboMemArena directory for --suite robomemarena"
+            "Optional clean external RoboMemArena checkout for development; "
+            "the frozen in-repository compatibility subset is the default"
         ),
     )
     return parser.parse_args()
@@ -150,9 +150,10 @@ def main() -> int:
                 "RoboMemArena supports no ICL or one verified fixed demo; "
                 "experience-context projection is not yet integrated"
             )
-        args.robomemarena_root = (
-            args.robomemarena_root or source_root.parent / "RoboMemArena"
-        ).expanduser().resolve()
+        if args.robomemarena_root is not None:
+            args.robomemarena_root = (
+                args.robomemarena_root.expanduser().resolve()
+            )
         task_source_fingerprint = robomemarena_source_fingerprint(
             args.robomemarena_root,
             task_id=args.task_id,
@@ -389,9 +390,13 @@ def main() -> int:
         },
     }
     if args.suite == ROBOMEMARENA_SUITE:
-        manifest["robomemarena_checkout"] = os.fspath(
-            args.robomemarena_root
-        )
+        manifest["robomemarena_source_kind"] = task_source_fingerprint[
+            "source_kind"
+        ]
+        if args.robomemarena_root is not None:
+            manifest["robomemarena_checkout"] = os.fspath(
+                args.robomemarena_root
+            )
     _write_json_atomic(run_directory / "run_manifest.json", manifest)
 
     server_command = [
@@ -427,7 +432,10 @@ def main() -> int:
         "--launcher-pid",
         str(os.getpid()),
     ]
-    if args.suite == ROBOMEMARENA_SUITE:
+    if (
+        args.suite == ROBOMEMARENA_SUITE
+        and args.robomemarena_root is not None
+    ):
         server_command.extend(
             (
                 "--robomemarena-root",

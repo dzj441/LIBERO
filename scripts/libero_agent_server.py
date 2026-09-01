@@ -32,17 +32,13 @@ def _early_option(name: str) -> str | None:
 
 if _early_option("--suite") == "robomemarena":
     checkout = _early_option("--robomemarena-root")
-    if checkout is None:
-        raise ValueError(
-            "--suite robomemarena requires --robomemarena-root"
-        )
     from scripts.robomemarena_bootstrap import (  # noqa: E402
         activate_robomemarena_core,
     )
 
     activate_robomemarena_core(
-        checkout_root=checkout,
         source_root=SOURCE_ROOT,
+        checkout_root=checkout,
     )
 
 from libero.libero.agent_env import (  # noqa: E402
@@ -164,10 +160,6 @@ def main() -> int:
         "private_control_step_callback": recorder.append_raw_observation,
     }
     if args.suite == "robomemarena":
-        if args.robomemarena_root is None:
-            raise ValueError(
-                "--suite robomemarena requires --robomemarena-root"
-            )
         task_source_fingerprint = robomemarena_source_fingerprint(
             args.robomemarena_root,
             task_id=args.task_id,

@@ -25,8 +25,10 @@ from .experience_context import (
 )
 from .robomemarena import (
     ROBOMEMARENA_SUITE,
+    RoboMemArenaOrderedStageEvaluator,
     get_robomemarena_task_spec,
     make_robomemarena_agent_env,
+    robomemarena_bddl_path,
     robomemarena_source_fingerprint,
 )
 
@@ -51,7 +53,9 @@ __all__ = [
     "validate_p4_replay_master",
     "write_public_observation",
     "ROBOMEMARENA_SUITE",
+    "RoboMemArenaOrderedStageEvaluator",
     "get_robomemarena_task_spec",
     "make_robomemarena_agent_env",
+    "robomemarena_bddl_path",
     "robomemarena_source_fingerprint",
 ]

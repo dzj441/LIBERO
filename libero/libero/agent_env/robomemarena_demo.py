@@ -28,6 +28,8 @@ class RoboMemArenaFullTrajectory:
     task_id: int
     seed: int
     actions: np.ndarray
+    gripper_action_clipped_to_contract: bool
+    raw_gripper_action_range: tuple[float, float]
     recorded_instruction: str
     observation_count: int
 
@@ -57,18 +59,25 @@ def load_robomemarena_full_trajectory(
         demo = handle["data/demo_0"]
         if "actions" not in demo or "obs" not in demo:
             raise ValueError("RoboMemArena HDF5 lacks actions or observations")
-        actions = np.asarray(demo["actions"], dtype=np.float64)
+        raw_actions = np.asarray(demo["actions"], dtype=np.float64)
         if (
-            actions.ndim != 2
-            or actions.shape[1] != 7
-            or len(actions) == 0
-            or not np.isfinite(actions).all()
-            or np.any(np.abs(actions) > 1.0 + 1.0e-9)
+            raw_actions.ndim != 2
+            or raw_actions.shape[1] != 7
+            or len(raw_actions) == 0
+            or not np.isfinite(raw_actions).all()
+            or np.any(np.abs(raw_actions[:, :6]) > 1.0 + 1.0e-9)
         ):
             raise ValueError(
-                "RoboMemArena actions must be finite normalized OSC vectors "
-                f"with shape (T, 7), got {actions.shape}"
+                "RoboMemArena motion actions must be finite normalized OSC "
+                f"vectors with shape (T, 7), got {raw_actions.shape}"
             )
+        raw_gripper_range = (
+            float(np.min(raw_actions[:, 6])),
+            float(np.max(raw_actions[:, 6])),
+        )
+        actions = raw_actions.copy()
+        actions[:, 6] = np.clip(actions[:, 6], -1.0, 1.0)
+        gripper_clipped = not np.array_equal(actions[:, 6], raw_actions[:, 6])
         observations = demo["obs"]
         missing = sorted(set(_REQUIRED_OBSERVATIONS).difference(observations))
         if missing:
@@ -97,6 +106,8 @@ def load_robomemarena_full_trajectory(
         task_id=task_id,
         seed=seed,
         actions=actions,
+        gripper_action_clipped_to_contract=gripper_clipped,
+        raw_gripper_action_range=raw_gripper_range,
         recorded_instruction=recorded_instruction,
         observation_count=len(actions),
     )

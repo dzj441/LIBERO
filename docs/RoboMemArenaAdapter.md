@@ -2,103 +2,84 @@
 
 ## Scope
 
-The first adapter milestone exposes RoboMemArena Task 4 through the same
-current benchmark contract used by ordinary LIBERO tasks:
+The adapter exposes RoboMemArena Tasks 1--26 through the same benchmark
+contract as ordinary LIBERO tasks:
 
 - P1--P4 public observation projection;
 - current-only atomic observation publication;
 - native normalized OSC sequence control over MCP or `liberoctl`;
 - private continuous video and action/session audit logs;
 - evaluator-private ordered-stage checking;
-- a public `finish` result containing only final success and accepted action
-  count.
+- final success based on the ordered task semantics rather than only the BDDL
+  terminal state.
 
-This is a task-source integration, not a decision to make the benchmark a
-RoboMemArena wrapper. RoboMemArena supplies a useful long-horizon reference
-task and stage semantics. New benchmark-owned long-horizon task families can
-reuse the validated infrastructure without copying its task set.
+This is a compatibility task source, not a decision to redefine the benchmark
+as a RoboMemArena wrapper. It provides four useful long-horizon families:
+multi-object sequence, occlusion/search, counting/pouring, and transferring.
+Benchmark-owned long-horizon tasks can reuse the same observation, control,
+and private-evaluator boundaries.
 
-The intended follow-up is therefore two-track:
+## Self-contained compatibility core
 
-1. keep a small, version-fingerprinted RoboMemArena compatibility subset for
-   comparison with that benchmark;
-2. build benchmark-owned task families that reuse the generic private
-   ordered-stage evaluator boundary while using our own BDDL, assets, prompts,
-   and task variations.
+RoboMemArena ships a modified LIBERO package under the same Python package
+name. The adapter freezes only the files that differ from this checkout,
+together with the 26 BDDL files and official stage predicates, under:
 
-This avoids making RoboMemArena's task distribution or release cadence the
-definition of this benchmark while preserving a concrete external
-long-horizon compatibility test.
+```text
+libero/libero/agent_env/robomemarena_vendor/
+```
 
-## External-source boundary
+The frozen source commit is:
 
-RoboMemArena is kept as a separate checkout because it ships a modified LIBERO
-package and additional simulation assets under the same Python package name.
-The adapter does not vendor those files. A dedicated server process loads the
-external fork first, then extends its package path with this repository's
-`agent_env` implementation.
+```text
+OpenHelix-Team/RoboMemArena
+cc156e519990ae43cf3b64281a548724f428fbbd
+```
 
-The launcher and server independently verify:
+At server startup, `scripts/robomemarena_bootstrap.py` creates a merged LIBERO
+package on the system temporary disk. Unchanged files are symlinked from this
+repository and the frozen overrides are copied on top. This gives RoboMemArena
+its expected physics, assets, cameras, and task registrations without changing
+ordinary LIBERO behavior and without requiring a sibling `../RoboMemArena`
+checkout.
 
-- the external Git commit;
-- a clean tracked working tree;
-- the selected BDDL SHA-256;
-- the tall-bottom cabinet asset SHA-256;
-- the upstream stage-reference SHA-256.
-
-These values are committed in the evaluator-private run manifest and
-server-ready contract. Absolute checkout paths never enter the Agent
+An external clean checkout can still be supplied with
+`--robomemarena-root` as an explicit development comparison. The default is
+the in-repository compatibility subset. The run manifest fingerprints the
+source kind, upstream commit, selected BDDL, representative cabinet asset, and
+stage-reference source. None of those evaluator-private values enter the Agent
 workspace.
 
-The current GitHub checkout has no repository-root license file. Keeping it
-external also avoids silently redistributing assets before their licensing is
-clarified.
+The upstream repository did not contain a repository-root license file at the
+frozen commit. Redistribution terms for these compatibility inputs must be
+resolved before a public release; their provenance is intentionally explicit.
 
 ## Observation integrity
 
-RoboMemArena's fork currently requires `use_object_obs=True` internally. Its
-raw observation therefore contains object poses and relative poses. That raw
-mapping never crosses the server boundary. `MasterObservationCollector`
-constructs a new allowlisted master frame and P1--P4 projection serializes only
-the selected robot state, public proprioception, RGB, depth, calibration, and
-initial anonymous task-entity annotations.
+The fork requires `use_object_obs=True` internally. Its raw observation can
+therefore contain object poses and relative poses. That raw mapping never
+crosses the server boundary. `MasterObservationCollector` builds a new
+allowlisted frame and P1--P4 projection publishes only robot state, public
+proprioception, RGB, depth, calibration, and initial anonymous task-entity
+annotations.
 
-Task 4 annotations follow the BDDL `obj_of_interest` list. They do not expose
-the hidden drawer object, semantic roles, private instance names, goal state,
-reward, or stage progress.
+Every BDDL `obj_of_interest` entry is exposed as an anonymous task entity on
+the initial annotated frame. The bundle does not assign manipulated-object or
+goal-fixture roles and does not expose private instance names, hidden objects,
+reward, goal state, or stage progress.
 
-## Task 4 success semantics
+## Ordered success semantics
 
-The public instruction is:
-
-> Open and close all drawers in order to check. Put butter into the drawer that
-> already contains an object.
-
-The private checker advances only through the next expected stage:
-
-1. open the top drawer;
-2. close the top drawer;
-3. open the middle drawer;
-4. close the middle drawer;
-5. open the bottom drawer;
-6. close the bottom drawer;
-7. open the top drawer again;
-8. put butter in the top drawer.
-
-Closing the top drawer at the end is recorded as an optional ninth stage, in
-line with the current reference evaluator and task wording. Final success
-requires all first eight stages in order. The ordinary BDDL final-goal result
-is also saved privately for audit but does not replace the ordered checker.
+The evaluator uses the task-specific ordered stage definitions frozen from
+RoboMemArena. It advances only through the next expected stage. Drawer tasks
+retain their documented optional final-close stage; required success excludes
+that optional stage. Counting tasks use the shared physical pour-event counter
+and reject a detected third pour. `finish` also records the ordinary BDDL final
+goal privately for comparison, but ordered success remains authoritative.
 
 ## Running
 
-The external checkout currently expected on this machine is:
-
-```text
-/inspire/hdd/global_user/lutianyi-253108120107/tylu/projects/dzj/RoboMemArena
-```
-
-Run one P4 no-ICL episode with the long-horizon 100-call budget:
+Run Task 4 at P4 with the long-horizon 100-submission budget:
 
 ```bash
 PYTHONPATH=. ../miniconda3/envs/libero/bin/python scripts/launch_agent_episode.py \
@@ -109,31 +90,20 @@ PYTHONPATH=. ../miniconda3/envs/libero/bin/python scripts/launch_agent_episode.p
   --max-agent-steps 100 \
   --action-interface native_osc_sequence \
   --control-transport mcp \
-  --robomemarena-root ../RoboMemArena \
   --codex-model gpt-5.6-sol \
   --codex-effort high
 ```
 
-RoboMemArena supports either no ICL or one replay-verified fixed demonstration.
-The downloaded HDF5 is never copied directly into an Agent workspace. It must
-first be physically replayed against the fingerprinted task source and captured
-again through the benchmark's P4 allowlist.
+No `--robomemarena-root` argument is required.
 
-Task 4 seed 100 has been replayed with all 1,020 native OSC actions. It passed
-all eight required ordered stages, the optional final drawer close, and the
-ordinary BDDL checker. The resulting P4 master contains 1,021 causal frames and
-is stored at:
-
-```text
-outputs/replay/robomemarena_task4_seed100_p4_master_v1/
-```
-
-Generate the master reproducibly with:
+RoboMemArena supports either no ICL or one replay-verified fixed demo. Raw
+HDF5 is never copied into an Agent workspace. It is first physically replayed
+against the frozen task source, captured through the P4 allowlist, and
+published only if its private ordered checker succeeds.
 
 ```bash
 python scripts/replay_robomemarena_demonstration.py \
-  --dataset /path/to/place_butter_into_drawer_have_object_full_seed100_task4.hdf5 \
-  --robomemarena-root ../RoboMemArena \
+  --dataset /path/to/full_seed100_task4.hdf5 \
   --task-id 4 \
   --p4-master-dir outputs/replay/robomemarena_task4_seed100_p4_master_v1 \
   --output-dir outputs/replay/robomemarena_task4_seed100_p4_replay_v1 \
@@ -141,73 +111,61 @@ python scripts/replay_robomemarena_demonstration.py \
   --save-video
 ```
 
-The source HDF5 lacks metric depth, calibration, and a serialized MuJoCo
-initial state. Its filename seed is therefore replayed using RoboMemArena's
-official NumPy-plus-environment seeding convention; P4 depth and calibration
-come from the replayed simulator, not from the downloaded file. Publication is
-refused unless both the ordered private evaluator and BDDL checker succeed.
+## Dataset audit and presentation catalog
 
-An audit of the projected Agent bundle found no source path, dataset or scene
-seed, Git fingerprint, private object instance name, reward, goal state,
-ordered-stage progress, or checker field. The public bundle contains anonymous
-initial task-entity annotations, P4 observations, and normalized OSC actions.
-
-## P4 validation pilot
-
-The adapter was exercised end to end with a real Codex P4, no-ICL rollout of
-Task 4. The run completed without a server, MCP, Codex-session, or observation
-publication failure:
-
-- Codex voluntarily called `finish_episode` after 80 accepted OSC sequence
-  submissions;
-- those submissions contained 886 native OSC micro-actions, all accepted by
-  the simulator;
-- the private ordered evaluator reported 0/8 required stages and the ordinary
-  BDDL goal was also false;
-- the Agent repeatedly approached the top drawer handle but did not establish
-  a pull that crossed the 10 cm stage threshold.
-
-The failed physical result is useful validation rather than an integration
-success claim: P4 depth and calibration were consumed, the robot was controlled
-through the public MCP boundary, continuous video and the Codex session were
-recorded, and the private sequential checker observed the whole rollout.
-
-The pilot is stored at:
+The shared dataset root is:
 
 ```text
-agent_runs/robomemarena_task4_p4_no_icl_pilot_seed_1830315042/
+/inspire/qb-ilm/project/semantic-visual-tokenizer/public/dzj/dataset/robomemarena/
 ```
 
-During its post-run leakage audit, the public `.libero/episode.json` was found
-to contain the evaluator-private run identifier. The pilot Agent did not read
-or use that value, but the field has since been removed from both single-episode
-and curriculum workspace contracts. Regression tests now assert that it is
-absent. The source fingerprint, run identifier, ordered-stage progress, raw
-object observations, reward, and goal state remain evaluator-private.
+Three full trajectories were selected for each of the 26 tasks. All 78 pass
+the structural audit: one aligned `data/demo_0`, finite 7D OSC actions, two
+256-by-256 RGB streams, EEF state, gripper state, and joint state. Selected
+trajectory lengths range from 471 to 1,878 control cycles.
 
-The complete AgentEnv and demonstration-replay test suite passed with 140
-tests after this correction.
+Task 10 contains an upstream data quirk: its motion components are normalized,
+but the close-gripper component reaches `+2`. Any future public action bundle
+preserves the binary close meaning by clipping only that scalar to the
+benchmark's `[-1, 1]` control contract; the replay receipt records the raw
+range and whether this normalization occurred.
 
-## Task 4 demonstration download
+The reproducible catalog command is:
 
-Task 4 full trajectories are downloaded separately from the current
-ModelScope repository into the shared dataset disk:
+```bash
+python scripts/catalog_robomemarena_dataset.py \
+  --data-root /inspire/qb-ilm/project/semantic-visual-tokenizer/public/dzj/dataset/robomemarena \
+  --output-dir temp/robomemarena \
+  --trajectories-per-task 3
+```
+
+It produces `dataset_audit.json`, `task_catalog.json`, `README.md`, and one
+side-by-side head/wrist MP4 per task. The 26 videos are named with their public
+task instructions. Both HDF5 RGB streams are already stored in top-left image
+coordinates, so the video exporter preserves their rows without applying the
+live-robosuite OpenGL-to-OpenCV flip a second time.
+
+## Validation
+
+`scripts/smoke_robomemarena_tasks.py` exercises one representative from each
+family: Task 1, Task 4, Task 10, and Task 25. Each smoke performs a real EGL
+reset, produces a P4 initial observation, executes one native OSC micro-action,
+produces the next observation, and evaluates private stage state. The combined
+report is:
 
 ```text
-/inspire/qb-ilm/project/semantic-visual-tokenizer/public/dzj/dataset/robomemarena/RoboMemArena-Multi-Object-Occlusion/
+temp/robomemarena/environment_smoke.json
 ```
 
-Only `4_drawer_butter_dataset/full_trajectory/*.hdf5` is selected. The
-download process clears all HTTP, HTTPS, and ALL proxy variables and also
-disables Git's HTTP/HTTPS proxy settings. Downloading an HDF5 file is not
-sufficient to expose it to an Agent: the dataset commit is frozen, the selected
-trajectory is replay-verified against the matching BDDL/assets, and only its
-public P1--P4 projection is published.
+All four representatives pass the environment/interface smoke using only the
+vendored compatibility source. `finish_success=false` is expected because a
+single neutral micro-action is not intended to complete a long-horizon task.
 
-## Version caveat
+Task 4 also has a previously replay-verified P4 master at:
 
-The checked-out GitHub BDDL is frozen by commit and hash, but the upstream
-README says the latest Task 4/5 randomized demonstrations are currently on
-ModelScope. Results from this adapter must name the exact source fingerprint;
-GitHub assets and a newer dataset release must not be presented as one
-undifferentiated version.
+```text
+outputs/replay/robomemarena_task4_seed100_p4_master_v1/
+```
+
+Its 1,020 native actions passed all eight required stages, the optional final
+drawer close, and the ordinary BDDL checker.

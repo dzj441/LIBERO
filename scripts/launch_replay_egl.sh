@@ -91,4 +91,13 @@ else
 fi
 
 cd "${REPO_ROOT}"
-exec "${PYTHON_BIN}" scripts/replay_demonstration.py "$@"
+TARGET_SCRIPT="scripts/replay_demonstration.py"
+if [[ "${1:-}" == "--python-script" ]]; then
+  if [[ -z "${2:-}" ]]; then
+    echo "--python-script requires a repository-relative Python path" >&2
+    exit 1
+  fi
+  TARGET_SCRIPT="$2"
+  shift 2
+fi
+exec "${PYTHON_BIN}" "${TARGET_SCRIPT}" "$@"
