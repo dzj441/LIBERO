@@ -50,3 +50,35 @@ def test_native_sequence_honors_stricter_configured_submission_limit():
     agent_env.step_osc_sequence([[0.0] * 7])
     with pytest.raises(RuntimeError, match=r"agent step limit reached \(2\)"):
         agent_env.step_osc_sequence([[0.0] * 7])
+
+
+class _BrokenBddlDiagnosticEnv:
+    @staticmethod
+    def check_success():
+        raise KeyError("missing_region")
+
+
+class _SuccessfulPrivateEvaluator:
+    @staticmethod
+    def result():
+        return {"success": True, "stage_score_percent": 100.0}
+
+
+def test_private_checker_remains_authoritative_when_bddl_diagnostic_breaks():
+    agent_env = LiberoAgentEnv.__new__(LiberoAgentEnv)
+    agent_env._started = True
+    agent_env._finished = False
+    agent_env._agent_step_index = 3
+    agent_env.env = _BrokenBddlDiagnosticEnv()
+    agent_env.private_episode_evaluator = _SuccessfulPrivateEvaluator()
+
+    result = agent_env.finish_episode()
+
+    assert result["success"] is True
+    assert result["accepted_agent_steps"] == 3
+    private = result["private_evaluation"]
+    assert private["bddl_final_goal_success"] is None
+    assert private["bddl_final_goal_diagnostic_error"] == {
+        "error_type": "KeyError",
+        "message": "'missing_region'",
+    }

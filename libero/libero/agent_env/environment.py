@@ -163,14 +163,28 @@ class LiberoAgentEnv:
 
     def finish_episode(self) -> dict[str, Any]:
         self._require_active()
-        bddl_final_goal_success = bool(self.env.check_success())
         private_evaluation = None
-        success = bddl_final_goal_success
-        if self.private_episode_evaluator is not None:
+        if self.private_episode_evaluator is None:
+            bddl_final_goal_success = bool(self.env.check_success())
+            success = bddl_final_goal_success
+        else:
             private_evaluation = self.private_episode_evaluator.result()
+            bddl_diagnostic_error = None
+            try:
+                bddl_final_goal_success = bool(self.env.check_success())
+            except Exception as exc:  # diagnostic must not replace authority
+                bddl_final_goal_success = None
+                bddl_diagnostic_error = {
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
             private_evaluation["bddl_final_goal_success"] = (
                 bddl_final_goal_success
             )
+            if bddl_diagnostic_error is not None:
+                private_evaluation["bddl_final_goal_diagnostic_error"] = (
+                    bddl_diagnostic_error
+                )
             success = bool(private_evaluation["success"])
         self._finished = True
         result = {

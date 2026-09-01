@@ -166,7 +166,15 @@ def main() -> int:
                 video.append_raw_observation(raw_observation)
 
         private_evaluation = evaluator.result()
-        bddl_success = bool(env.check_success())
+        bddl_diagnostic_error = None
+        try:
+            bddl_success = bool(env.check_success())
+        except Exception as exc:  # ordered stages are authoritative here
+            bddl_success = None
+            bddl_diagnostic_error = {
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            }
         # RoboMemArena's ordered checker is the authoritative task contract.
         # Its counting tasks intentionally define success by completed pour
         # events even when the ordinary BDDL terminal-state proxy is false.
@@ -183,6 +191,15 @@ def main() -> int:
             "private_evaluation": {
                 **private_evaluation,
                 "bddl_final_goal_success": bddl_success,
+                **(
+                    {
+                        "bddl_final_goal_diagnostic_error": (
+                            bddl_diagnostic_error
+                        )
+                    }
+                    if bddl_diagnostic_error is not None
+                    else {}
+                ),
             },
             "source": {
                 "dataset": os.fspath(trajectory.dataset_path),
