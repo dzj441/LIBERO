@@ -5,6 +5,7 @@ import pytest
 from PIL import Image
 
 from libero.libero.agent_env.artifacts import (
+    depth_preview_with_metadata,
     replace_current_public_observation,
     write_public_observation,
 )
@@ -28,6 +29,89 @@ def test_materialized_level4_frame_uses_files_for_dense_arrays(tmp_path):
     assert "mask" not in entity
 
 
+def test_depth_preview_falls_back_to_finite_extrema_for_dominant_surface():
+    depth = np.full((10, 10), 0.1, dtype=np.float32)
+    depth[0, 0] = 0.5
+    valid = np.ones(depth.shape, dtype=np.bool_)
+
+    preview, metadata = depth_preview_with_metadata(depth, valid)
+
+    assert metadata["preview_range_source"] == "finite_min_max_fallback"
+    assert metadata["preview_mapping"] == "inverse_depth_linear_near_white"
+    assert metadata["preview_near_m"] == pytest.approx(0.1)
+    assert metadata["preview_far_m"] == pytest.approx(0.5)
+    assert preview[0, 0] == 0
+    assert preview[1, 1] == 255
+
+
+def test_depth_preview_uses_percentile_range_for_normal_distribution():
+    depth = np.linspace(0.1, 0.8, 100, dtype=np.float32).reshape(10, 10)
+    valid = np.ones(depth.shape, dtype=np.bool_)
+
+    preview, metadata = depth_preview_with_metadata(depth, valid)
+
+    assert metadata["preview_range_source"] == "inverse_depth_percentile_2_98"
+    assert metadata["preview_mapping"] == "inverse_depth_linear_near_white"
+    assert metadata["preview_near_m"] < metadata["preview_far_m"]
+    assert preview[0, 0] == 255
+    assert preview[-1, -1] == 0
+
+
+def test_depth_preview_keeps_invalid_and_nonfinite_pixels_black():
+    depth = np.array(
+        [[0.1, np.nan], [np.inf, 0.0]], dtype=np.float32
+    )
+    valid = np.ones(depth.shape, dtype=np.bool_)
+
+    preview, metadata = depth_preview_with_metadata(depth, valid)
+
+    assert preview[0, 0] == 255
+    np.testing.assert_array_equal(
+        preview, np.array([[255, 0], [0, 0]], dtype=np.uint8)
+    )
+    assert metadata["preview_near_m"] == pytest.approx(0.1)
+    assert metadata["preview_far_m"] == pytest.approx(0.1)
+    assert metadata["preview_range_source"] == "degenerate"
+
+
+def test_materialized_depth_preserves_raw_array_and_publishes_preview_metadata(
+    tmp_path,
+):
+    public = project_public_observation(_master(), "level4")
+    raw_depth = np.array(
+        [[0.1, 0.5], [np.nan, np.inf]], dtype=np.float32
+    )
+    public["cameras"]["head"]["depth_m"] = raw_depth.copy()
+    public["cameras"]["head"]["depth_valid_mask"] = np.ones(
+        raw_depth.shape, dtype=np.bool_
+    )
+
+    json_path = write_public_observation(public, tmp_path)
+    metadata = json.loads(json_path.read_text())
+    depth_metadata = metadata["cameras"]["head"]["depth"]
+
+    np.testing.assert_array_equal(
+        np.load(tmp_path / depth_metadata["metric_file"], allow_pickle=False),
+        raw_depth,
+    )
+    assert depth_metadata["preview_mapping"] == "inverse_depth_linear_near_white"
+    assert depth_metadata["preview_range_source"] == "inverse_depth_percentile_2_98"
+    assert (
+        0.1
+        <= depth_metadata["preview_near_m"]
+        < depth_metadata["preview_far_m"]
+        <= 0.5
+    )
+    valid_preview = np.asarray(
+        Image.open(tmp_path / depth_metadata["valid_mask_file"])
+    )
+    np.testing.assert_array_equal(
+        valid_preview, np.array([[255, 255], [0, 0]], dtype=np.uint8)
+    )
+    preview = np.asarray(Image.open(tmp_path / depth_metadata["preview_file"]))
+    assert np.all(preview[1, :] == 0)
+
+
 def test_materialized_level1_has_no_hidden_level4_files(tmp_path):
     public = project_public_observation(_master(), "level1")
     json_path = write_public_observation(public, tmp_path)
@@ -46,7 +130,7 @@ def test_materialized_task_reference_uses_a_plain_png_file(tmp_path):
     metadata = json.loads(json_path.read_text())
     reference = metadata["task_reference"]
 
-    assert reference["semantics"] == "desired_final_state"
+    assert reference["semantics"] == "desired_object_arrangement"
     assert set(reference["rgb"]) == {"file", "media_type", "shape"}
     assert reference["rgb"]["file"] == "task_reference/rgb.png"
     reference_path = tmp_path / reference["rgb"]["file"]

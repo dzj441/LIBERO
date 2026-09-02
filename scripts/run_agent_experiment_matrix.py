@@ -21,6 +21,10 @@ from libero.libero.agent_env.experiments import (  # noqa: E402
     summarize_experiment_runs,
     write_experiment_summary,
 )
+from libero.libero.agent_env.codex_defaults import (  # noqa: E402
+    DEFAULT_CODEX_EFFORT,
+    DEFAULT_CODEX_MODEL,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,8 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--resolution", type=int, default=256)
     parser.add_argument("--initial-settle-control-steps", type=int, default=10)
     parser.add_argument("--codex-bin", default="codex")
-    parser.add_argument("--codex-model", default="gpt-5.6-sol")
-    parser.add_argument("--codex-effort", default="high")
+    parser.add_argument("--codex-model", default=DEFAULT_CODEX_MODEL)
+    parser.add_argument("--codex-effort", default=DEFAULT_CODEX_EFFORT)
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
     parser.add_argument("--continue-on-error", action="store_true")
     parser.add_argument("--dry-run", action="store_true")

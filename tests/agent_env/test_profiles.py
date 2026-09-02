@@ -82,7 +82,7 @@ def _master(frame_index=0, *, task_reference=False):
     }
     if task_reference:
         master["task_reference"] = {
-            "semantics": "desired_final_state",
+            "semantics": "desired_object_arrangement",
             "rgb": np.arange(2 * 3 * 3, dtype=np.uint8).reshape(2, 3, 3),
         }
     return master
@@ -127,7 +127,7 @@ def test_all_profiles_preserve_task_reference(profile):
         _master(task_reference=True), profile
     )
 
-    assert public["task_reference"]["semantics"] == "desired_final_state"
+    assert public["task_reference"]["semantics"] == "desired_object_arrangement"
     np.testing.assert_array_equal(
         public["task_reference"]["rgb"],
         _master(task_reference=True)["task_reference"]["rgb"],
@@ -142,35 +142,47 @@ def test_task_reference_is_persistent_across_frames():
         _master(frame_index=1, task_reference=True), "level1"
     )
 
-    assert first["task_reference"]["semantics"] == "desired_final_state"
-    assert later["task_reference"]["semantics"] == "desired_final_state"
+    assert first["task_reference"]["semantics"] == "desired_object_arrangement"
+    assert later["task_reference"]["semantics"] == "desired_object_arrangement"
     np.testing.assert_array_equal(
         first["task_reference"]["rgb"], later["task_reference"]["rgb"]
+    )
+
+
+def test_legacy_task_reference_semantics_are_accepted_and_preserved():
+    master = _master(task_reference=True)
+    master["task_reference"]["semantics"] = "desired_final_state"
+
+    public = project_public_observation(master, "level1")
+
+    assert public["task_reference"]["semantics"] == "desired_final_state"
+    np.testing.assert_array_equal(
+        public["task_reference"]["rgb"], master["task_reference"]["rgb"]
     )
 
 
 @pytest.mark.parametrize(
     "reference",
     (
-        {"semantics": "desired_final_state", "rgb": [[[]]]},
+        {"semantics": "desired_object_arrangement", "rgb": [[[]]]},
         {
-            "semantics": "desired_final_state",
+            "semantics": "desired_object_arrangement",
             "rgb": np.zeros((2, 2, 3), dtype=np.float32),
         },
         {
-            "semantics": "desired_final_state",
+            "semantics": "desired_object_arrangement",
             "rgb": np.zeros((2, 2), dtype=np.uint8),
         },
         {
-            "semantics": "desired_final_state",
+            "semantics": "desired_object_arrangement",
             "rgb": np.zeros((2, 2, 1), dtype=np.uint8),
         },
         {
-            "semantics": "desired_final_state",
+            "semantics": "desired_object_arrangement",
             "rgb": np.zeros((0, 2, 3), dtype=np.uint8),
         },
         {
-            "semantics": "desired_final_state",
+            "semantics": "desired_object_arrangement",
             "rgb": np.zeros((2, 2, 3), dtype=np.uint8),
             "extra": "not allowed",
         },

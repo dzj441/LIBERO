@@ -3,8 +3,10 @@ import pytest
 
 from libero.libero.agent_env.observation import (
     MasterObservationCollector,
+    NORMALIZED_DEPTH_FAR_PLANE_EPSILON,
     TaskEntitySelection,
     infer_task_entities,
+    _metric_depth_valid_mask,
 )
 from libero.libero.benchmark import get_benchmark
 from libero.libero.envs.bddl_utils import robosuite_parse_problem
@@ -106,6 +108,38 @@ def test_collector_rejects_invalid_task_reference_rgb(reference):
             task_entities=TaskEntitySelection(("object_1",)),
             task_reference_rgb=reference,
         )
+
+
+def test_metric_depth_mask_rejects_far_plane_without_changing_metric_values():
+    epsilon = NORMALIZED_DEPTH_FAR_PLANE_EPSILON
+    just_inside = np.nextafter(
+        np.float32(1.0 - epsilon), np.float32(0.0)
+    )
+    just_outside = np.nextafter(
+        np.float32(1.0 - epsilon), np.float32(1.0)
+    )
+    normalized_depth = np.array(
+        [[0.0, 0.5, just_inside, just_outside], [0.25, np.nan, -0.1, 1.0]],
+        dtype=np.float32,
+    )
+    converted_depth = np.array(
+        [[0.04, 0.2, 1.0, 461.0], [0.06, np.nan, 0.01, np.inf]],
+        dtype=np.float32,
+    )
+    converted_before = converted_depth.copy()
+
+    valid = _metric_depth_valid_mask(normalized_depth, converted_depth)
+
+    np.testing.assert_array_equal(
+        valid,
+        np.array(
+            [[True, True, True, False], [True, False, False, False]],
+            dtype=np.bool_,
+        ),
+    )
+    # The collector stores the complete get_real_depth_map result separately;
+    # applying the mask must not mutate or clamp that audit/debug array.
+    np.testing.assert_array_equal(converted_depth, converted_before)
 
 
 @pytest.mark.parametrize(

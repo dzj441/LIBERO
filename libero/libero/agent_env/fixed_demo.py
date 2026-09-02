@@ -25,7 +25,11 @@ from .annotation_contract import (
     TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
     validate_task_entity_mapping,
 )
-from .artifacts import write_public_observation
+from .artifacts import (
+    DEPTH_PREVIEW_MAPPING,
+    depth_preview_with_metadata,
+    write_public_observation,
+)
 from .profiles import (
     COORDINATE_CONVENTION_FIELDS,
     PROPRIOCEPTION_FIELDS,
@@ -41,6 +45,33 @@ FIXED_DEMO_BUNDLE_SCHEMA_VERSION = "libero.fixed_demo_bundle.v2"
 SOURCE_ACTION_SCHEMA_VERSION = "libero.normalized_osc_pose_action.v1"
 MAX_CONTACT_SHEET_FRAMES = 12
 CAMERA_NAMES = ("head", "wrist")
+LEGACY_DEPTH_FIELDS = frozenset(
+    {
+        "metric_file",
+        "preview_file",
+        "valid_mask_file",
+        "dtype",
+        "shape",
+        "unit",
+    }
+)
+PREVIEW_DEPTH_FIELDS = frozenset(
+    {
+        *LEGACY_DEPTH_FIELDS,
+        "preview_near_m",
+        "preview_far_m",
+        "preview_mapping",
+        "preview_range_source",
+    }
+)
+PREVIEW_RANGE_SOURCES = frozenset(
+    {
+        "inverse_depth_percentile_2_98",
+        "finite_min_max_fallback",
+        "degenerate",
+        "no_valid_depth",
+    }
+)
 
 
 class FixedDemoError(ValueError):
@@ -631,13 +662,26 @@ def _project_materialized_frame(
                             "matrix_T_robot_base_from_camera_opencv_4x4"
                         ]
                     ),
-                    "depth": deepcopy(source_camera["depth"]),
                 }
             )
-            for field in ("metric_file", "preview_file", "valid_mask_file"):
+            depth = deepcopy(source_camera["depth"])
+            for field in ("metric_file", "valid_mask_file"):
                 _copy_referenced_file(
-                    source_root, destination_root, camera["depth"][field]
+                    source_root, destination_root, depth[field]
                 )
+            source_depth = np.load(
+                source_root / depth["metric_file"], allow_pickle=False
+            )
+            with Image.open(source_root / depth["valid_mask_file"]) as mask_image:
+                source_valid = np.asarray(mask_image) > 0
+            preview, preview_metadata = depth_preview_with_metadata(
+                source_depth, source_valid
+            )
+            preview_path = destination_root / depth["preview_file"]
+            preview_path.parent.mkdir(parents=True, exist_ok=True)
+            Image.fromarray(preview).save(preview_path)
+            depth.update(preview_metadata)
+            camera["depth"] = depth
         projected["cameras"][camera_name] = camera
     if profile >= ObservationProfile.LEVEL3:
         projected["proprioception"] = deepcopy(source["proprioception"])
@@ -721,14 +765,11 @@ def _validate_materialized_observation(
         _validate_artifact_file_field(camera["rgb"], "file", frame_root)
         if expected_profile >= ObservationProfile.LEVEL4:
             depth = camera["depth"]
-            if set(depth) != {
-                "metric_file",
-                "preview_file",
-                "valid_mask_file",
-                "dtype",
-                "shape",
-                "unit",
-            }:
+            if set(depth) == LEGACY_DEPTH_FIELDS:
+                pass
+            elif set(depth) == PREVIEW_DEPTH_FIELDS:
+                _validate_depth_preview_metadata(depth)
+            else:
                 raise FixedDemoError("materialized depth fields are invalid")
             for field in ("metric_file", "preview_file", "valid_mask_file"):
                 _inside(frame_root, depth[field], f"{camera_name} {field}")
@@ -767,6 +808,49 @@ def _validate_materialized_observation(
                     raise FixedDemoError("materialized annotation fields are invalid")
                 _inside(frame_root, task_entities[entity_id]["mask_file"], "mask")
     return observation
+
+
+def _validate_depth_preview_metadata(depth: Mapping[str, Any]) -> None:
+    """Validate the optional depth-preview transfer metadata.
+
+    The six-field legacy depth contract remains accepted above so previously
+    captured demonstrations stay readable.  New captures must describe the
+    preview mapping and the metric near/far range that was used to render it.
+    """
+
+    if depth.get("dtype") != "float32" or depth.get("unit") != "metre":
+        raise FixedDemoError("materialized depth base metadata is invalid")
+    if depth.get("preview_mapping") != DEPTH_PREVIEW_MAPPING:
+        raise FixedDemoError("materialized depth preview mapping is invalid")
+    source = depth.get("preview_range_source")
+    if source not in PREVIEW_RANGE_SOURCES:
+        raise FixedDemoError("materialized depth preview range source is invalid")
+
+    near = depth.get("preview_near_m")
+    far = depth.get("preview_far_m")
+
+    def _positive_finite(value: Any) -> bool:
+        return (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(float(value))
+            and float(value) > 0.0
+        )
+
+    if source == "no_valid_depth":
+        if near is not None or far is not None:
+            raise FixedDemoError(
+                "no-valid-depth preview must not publish a range"
+            )
+        return
+    if not _positive_finite(near) or not _positive_finite(far):
+        raise FixedDemoError("materialized depth preview range is invalid")
+    if float(near) > float(far):
+        raise FixedDemoError("materialized depth preview near/far order is invalid")
+    if source == "degenerate" and not math.isclose(
+        float(near), float(far), rel_tol=0.0, abs_tol=1.0e-12
+    ):
+        raise FixedDemoError("degenerate depth preview range is inconsistent")
 
 
 def _build_contact_sheet(sources: list[tuple[str, Path]], destination: Path) -> None:

@@ -18,6 +18,17 @@ from .annotation_contract import validate_task_entity_mapping
 from .profiles import validate_task_reference
 
 
+# The preview is an inspection aid, not a second metric-depth representation.
+# Inverse depth allocates more contrast to the nearby geometry that matters for
+# manipulation while still keeping the public near=bright convention.  A
+# percentile range can collapse when a nearly flat surface dominates a frame;
+# in that case the finite extrema are the deterministic fallback.
+DEPTH_PREVIEW_MAPPING = "inverse_depth_linear_near_white"
+_DEPTH_PREVIEW_PERCENTILES = (2.0, 98.0)
+_DEPTH_PREVIEW_RELATIVE_SPAN_FLOOR = 0.05
+_DEPTH_PREVIEW_ABSOLUTE_SPAN_FLOOR = 1.0e-6
+
+
 def write_public_observation(
     observation: Mapping[str, Any], output_directory: str | Path
 ) -> Path:
@@ -65,12 +76,14 @@ def write_public_observation(
         if "depth_m" in camera:
             depth = np.asarray(camera.pop("depth_m"), dtype=np.float32)
             valid = np.asarray(camera.pop("depth_valid_mask"), dtype=np.bool_)
+            valid = _finite_positive_valid_mask(depth, valid)
             depth_path = camera_directory / "depth_m.npy"
             valid_path = camera_directory / "depth_valid_mask.png"
             preview_path = camera_directory / "depth_visualization.png"
             np.save(depth_path, depth, allow_pickle=False)
             Image.fromarray(valid.astype(np.uint8) * 255).save(valid_path)
-            Image.fromarray(_depth_preview(depth, valid)).save(preview_path)
+            preview, preview_metadata = depth_preview_with_metadata(depth, valid)
+            Image.fromarray(preview).save(preview_path)
             camera["depth"] = {
                 "metric_file": str(depth_path.relative_to(output_directory)),
                 "preview_file": str(preview_path.relative_to(output_directory)),
@@ -78,6 +91,7 @@ def write_public_observation(
                 "dtype": "float32",
                 "shape": list(depth.shape),
                 "unit": "metre",
+                **preview_metadata,
             }
 
     if "annotations" in metadata:
@@ -160,17 +174,106 @@ def replace_current_public_observation(
             shutil.rmtree(backup_directory)
 
 
-def _depth_preview(depth: np.ndarray, valid: np.ndarray) -> np.ndarray:
+def _finite_positive_valid_mask(depth: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Return the portion of ``valid`` that has usable metric depth."""
+
+    depth = np.asarray(depth)
+    valid = np.asarray(valid, dtype=np.bool_)
+    if depth.shape != valid.shape:
+        raise ValueError(
+            f"depth and valid mask shapes differ: {depth.shape} vs {valid.shape}"
+        )
+    return valid & np.isfinite(depth) & (depth > 0.0)
+
+
+def depth_preview_with_metadata(
+    depth: np.ndarray, valid: np.ndarray
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """Render inverse metric depth and describe the exact transfer function.
+
+    ``depth`` is measured in metres.  Only finite, positive values selected by
+    ``valid`` participate in the range calculation; all other pixels remain
+    black.  The two percentile limits are expressed in inverse metres.  If
+    their span is less than five percent of the full finite inverse-depth span
+    (or less than the absolute numerical floor), the finite extrema are used so
+    that a dominant nearly-flat surface cannot collapse the whole preview.
+    """
+
+    depth = np.asarray(depth, dtype=np.float32)
+    valid = _finite_positive_valid_mask(depth, valid)
+    inverse_depth_all = np.zeros(depth.shape, dtype=np.float64)
+    np.divide(
+        1.0,
+        depth.astype(np.float64, copy=False),
+        out=inverse_depth_all,
+        where=valid,
+    )
+    valid &= np.isfinite(inverse_depth_all)
     preview = np.zeros(depth.shape, dtype=np.uint8)
-    values = depth[valid]
+    values = depth[valid].astype(np.float64, copy=False)
     if values.size == 0:
-        return preview
-    lower, upper = np.percentile(values, [2.0, 98.0])
-    if upper <= lower:
-        upper = lower + 1.0e-6
-    normalized = np.clip((depth - lower) / (upper - lower), 0.0, 1.0)
-    # Near is bright so foreground geometry remains easy to inspect.
-    preview[valid] = np.round((1.0 - normalized[valid]) * 255.0).astype(np.uint8)
+        return preview, {
+            "preview_near_m": None,
+            "preview_far_m": None,
+            "preview_mapping": DEPTH_PREVIEW_MAPPING,
+            "preview_range_source": "no_valid_depth",
+        }
+
+    inverse_values = inverse_depth_all[valid]
+    if inverse_values.size == 0:
+        return preview, {
+            "preview_near_m": None,
+            "preview_far_m": None,
+            "preview_mapping": DEPTH_PREVIEW_MAPPING,
+            "preview_range_source": "no_valid_depth",
+        }
+
+    percentile_low, percentile_high = np.percentile(
+        inverse_values, _DEPTH_PREVIEW_PERCENTILES
+    )
+    finite_low = float(np.min(inverse_values))
+    finite_high = float(np.max(inverse_values))
+    full_span = finite_high - finite_low
+    percentile_span = float(percentile_high - percentile_low)
+    collapsed = full_span > 0.0 and percentile_span <= max(
+        full_span * _DEPTH_PREVIEW_RELATIVE_SPAN_FLOOR,
+        _DEPTH_PREVIEW_ABSOLUTE_SPAN_FLOOR,
+    )
+    if collapsed:
+        lower, upper = finite_low, finite_high
+        range_source = "finite_min_max_fallback"
+    elif full_span <= 0.0:
+        lower, upper = finite_low, finite_high
+        range_source = "degenerate"
+    else:
+        lower, upper = float(percentile_low), float(percentile_high)
+        range_source = "inverse_depth_percentile_2_98"
+
+    if upper > lower:
+        # Near is bright: larger inverse depth maps to larger intensity.
+        normalized = np.clip(
+            (inverse_depth_all - lower) / (upper - lower), 0.0, 1.0
+        )
+        preview[valid] = np.round(normalized[valid] * 255.0).astype(np.uint8)
+    else:
+        # A constant valid-depth frame has no ordering to visualize.  Mark the
+        # valid surface as near (white) and leave invalid pixels black.
+        preview[valid] = 255
+
+    near_m = 1.0 / upper if upper > 0.0 else None
+    far_m = 1.0 / lower if lower > 0.0 else None
+    return preview, {
+        "preview_near_m": None if near_m is None else float(near_m),
+        "preview_far_m": None if far_m is None else float(far_m),
+        "preview_mapping": DEPTH_PREVIEW_MAPPING,
+        "preview_range_source": range_source,
+    }
+
+
+def _depth_preview(depth: np.ndarray, valid: np.ndarray) -> np.ndarray:
+    """Backward-compatible image-only wrapper around the metadata renderer."""
+
+    preview, _ = depth_preview_with_metadata(depth, valid)
     return preview
 
 

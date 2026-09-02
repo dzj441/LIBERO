@@ -18,13 +18,20 @@ from .annotation_contract import (
     task_entity_id,
 )
 from .control import matrix_to_quaternion_xyzw, quaternion_xyzw_to_matrix
-from .profiles import validate_task_reference_rgb
+from .profiles import TASK_REFERENCE_SEMANTICS, validate_task_reference_rgb
 
 
 CAMERA_SOURCES = {
     "head": "agentview",
     "wrist": "robot0_eye_in_hand",
 }
+
+# MuJoCo's normalized depth value 1.0 denotes the far clipping plane / no-hit.
+# Values within this small float tolerance are the same sentinel after the
+# renderer's float conversion and must not become apparently valid hundreds of
+# metre measurements.  The metric depth array itself is intentionally retained
+# unchanged for auditability; this threshold affects only its validity mask.
+NORMALIZED_DEPTH_FAR_PLANE_EPSILON = 1.0e-4
 
 
 @dataclass(frozen=True)
@@ -183,7 +190,7 @@ class MasterObservationCollector:
         }
         if self.task_reference_rgb is not None:
             master["task_reference"] = {
-                "semantics": "desired_final_state",
+                "semantics": TASK_REFERENCE_SEMANTICS,
                 "rgb": self.task_reference_rgb.copy(),
             }
 
@@ -198,11 +205,13 @@ class MasterObservationCollector:
             normalized_depth = _to_opencv_image(
                 np.asarray(raw_observation[depth_key], dtype=np.float32)
             )
+            if normalized_depth.ndim == 3 and normalized_depth.shape[-1] == 1:
+                normalized_depth = normalized_depth[..., 0]
             depth_m = get_real_depth_map(self.env.sim, normalized_depth)
             if depth_m.ndim == 3 and depth_m.shape[-1] == 1:
                 depth_m = depth_m[..., 0]
             depth_m = np.asarray(depth_m, dtype=np.float32)
-            valid = np.isfinite(depth_m) & (depth_m > 0.0)
+            valid = _metric_depth_valid_mask(normalized_depth, depth_m)
 
             matrix_world_from_camera = get_camera_extrinsic_matrix(
                 self.env.sim, source_name
@@ -281,6 +290,33 @@ def _annotation_from_mask(mask: np.ndarray) -> dict[str, Any]:
         "bbox_xyxy": bbox,
         "mask": np.ascontiguousarray(mask, dtype=np.bool_),
     }
+
+
+def _metric_depth_valid_mask(
+    normalized_depth: np.ndarray, depth_m: np.ndarray
+) -> np.ndarray:
+    """Mark measurable depth while retaining the raw metric conversion.
+
+    MuJoCo's far-plane/no-hit normalized values are converted by robosuite's
+    ``get_real_depth_map`` into a very large finite distance.  Checking only
+    ``isfinite(depth_m)`` therefore incorrectly exposes those sentinels.  The
+    normalized input is the authoritative place to filter them.
+    """
+
+    normalized_depth = np.asarray(normalized_depth)
+    depth_m = np.asarray(depth_m)
+    if normalized_depth.shape != depth_m.shape:
+        raise ValueError(
+            "normalized and metric depth shapes differ: "
+            f"{normalized_depth.shape} vs {depth_m.shape}"
+        )
+    return (
+        np.isfinite(normalized_depth)
+        & (normalized_depth >= 0.0)
+        & (normalized_depth < 1.0 - NORMALIZED_DEPTH_FAR_PLANE_EPSILON)
+        & np.isfinite(depth_m)
+        & (depth_m > 0.0)
+    )
 
 
 def _to_opencv_image(array: np.ndarray) -> np.ndarray:

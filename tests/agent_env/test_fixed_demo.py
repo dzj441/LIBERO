@@ -3,9 +3,11 @@ import json
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from libero.libero.agent_env.artifacts import write_public_observation
 from libero.libero.agent_env.fixed_demo import (
+    FixedDemoError,
     P4_MASTER_SCHEMA_VERSION,
     contact_sheet_indices,
     project_fixed_demo_bundle,
@@ -109,6 +111,17 @@ def _test_master(root: Path) -> Path:
     return root
 
 
+def _rewrite_frame_inventory(root: Path, frame_index: int) -> None:
+    manifest_path = root / "p4_master_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    frame = manifest["capture"]["frames"][frame_index]
+    frame_root = root / "frames" / f"frame_{frame_index:06d}"
+    frame["files"] = _inventory(root, frame_root)
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
 def test_project_level4_bundle_keeps_actions_and_drops_private_provenance(tmp_path):
     master = _test_master(tmp_path / "master")
     validate_p4_replay_master(master)
@@ -138,6 +151,96 @@ def test_project_level4_bundle_keeps_actions_and_drops_private_provenance(tmp_pa
     )
     assert "/private/source" not in rendered
     assert "first_success_step" not in rendered
+    for camera_name in ("head", "wrist"):
+        depth = json.loads(
+            (bundle / "frames/frame_000000/observation.json").read_text()
+        )["cameras"][camera_name]["depth"]
+        assert depth["preview_mapping"] == "inverse_depth_linear_near_white"
+        assert "preview_near_m" in depth
+        assert "preview_far_m" in depth
+        assert "preview_range_source" in depth
+
+
+def test_fixed_demo_accepts_legacy_depth_metadata_without_preview_fields(tmp_path):
+    master = _test_master(tmp_path / "master")
+    source_metric = {}
+    source_valid_mask = {}
+    for frame_index in range(2):
+        frame_root = master / "frames" / f"frame_{frame_index:06d}"
+        observation_path = (
+            frame_root / "observation.json"
+        )
+        observation = json.loads(observation_path.read_text(encoding="utf-8"))
+        for camera_name, camera in observation["cameras"].items():
+            depth = camera["depth"]
+            source_metric[frame_index, camera_name] = (
+                frame_root / depth["metric_file"]
+            ).read_bytes()
+            source_valid_mask[frame_index, camera_name] = (
+                frame_root / depth["valid_mask_file"]
+            ).read_bytes()
+            # Simulate the stale legacy preview; projection must regenerate it
+            # from the copied metric depth and valid mask.
+            Image.new("L", (2, 2), color=0).save(
+                frame_root / depth["preview_file"]
+            )
+            for field in (
+                "preview_near_m",
+                "preview_far_m",
+                "preview_mapping",
+                "preview_range_source",
+            ):
+                depth.pop(field)
+        observation_path.write_text(
+            json.dumps(observation, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        _rewrite_frame_inventory(master, frame_index)
+
+    validate_p4_replay_master(master)
+    bundle = tmp_path / "bundle"
+    project_fixed_demo_bundle(
+        master_root=master,
+        destination=bundle,
+        profile="level4",
+        expected_task_instruction=(
+            "pick up the alphabet soup and place it in the basket"
+        ),
+    )
+    projected = json.loads(
+        (bundle / "frames/frame_000000/observation.json").read_text()
+    )
+    for camera_name in ("head", "wrist"):
+        depth = projected["cameras"][camera_name]["depth"]
+        assert depth["preview_mapping"] == "inverse_depth_linear_near_white"
+        assert "preview_near_m" in depth
+        assert "preview_far_m" in depth
+        assert "preview_range_source" in depth
+        projected_frame_root = bundle / "frames/frame_000000"
+        assert (
+            projected_frame_root / depth["metric_file"]
+        ).read_bytes() == source_metric[0, camera_name]
+        assert (
+            projected_frame_root / depth["valid_mask_file"]
+        ).read_bytes() == source_valid_mask[0, camera_name]
+        with Image.open(projected_frame_root / depth["preview_file"]) as preview:
+            assert preview.getextrema() == (255, 255)
+
+
+def test_fixed_demo_rejects_invalid_new_depth_preview_mapping(tmp_path):
+    master = _test_master(tmp_path / "master")
+    observation_path = master / "frames/frame_000000/observation.json"
+    observation = json.loads(observation_path.read_text(encoding="utf-8"))
+    observation["cameras"]["head"]["depth"]["preview_mapping"] = (
+        "not-a-depth-map"
+    )
+    observation_path.write_text(
+        json.dumps(observation, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    _rewrite_frame_inventory(master, 0)
+
+    with pytest.raises(FixedDemoError, match="preview mapping"):
+        validate_p4_replay_master(master)
 
 
 @pytest.mark.parametrize("profile_number", (1, 2, 3, 4))

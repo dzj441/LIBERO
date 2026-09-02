@@ -31,6 +31,10 @@ from libero.libero.agent_env.experience_context import (
     project_experience_context_bundle,
 )
 from libero.libero.agent_env.context_audit import audit_experience_context_run
+from libero.libero.agent_env.codex_defaults import (
+    DEFAULT_CODEX_EFFORT,
+    DEFAULT_CODEX_MODEL,
+)
 from libero.libero.agent_env.runtime_contract import (
     build_server_ready_contract,
     canonical_json_sha256,
@@ -87,8 +91,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nvidia-runtime-root", type=Path)
     parser.add_argument("--server-ready-timeout-s", type=float, default=180.0)
     parser.add_argument("--codex-bin", default="codex")
-    parser.add_argument("--codex-model")
-    parser.add_argument("--codex-effort")
+    parser.add_argument("--codex-model", default=DEFAULT_CODEX_MODEL)
+    parser.add_argument("--codex-effort", default=DEFAULT_CODEX_EFFORT)
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
     parser.add_argument(
         "--icl",

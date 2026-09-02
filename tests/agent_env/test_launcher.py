@@ -14,6 +14,11 @@ from scripts.launch_agent_episode import (
     parse_args,
     _task_instruction,
 )
+from scripts.launch_agent_curriculum import parse_args as parse_curriculum_args
+from scripts.run_agent_experiment_matrix import (
+    build_launch_command,
+    parse_args as parse_matrix_args,
+)
 
 
 def test_codex_usage_limit_is_classified_as_infrastructure_error(tmp_path):
@@ -91,6 +96,249 @@ def test_launcher_defaults_to_mcp_native_osc(monkeypatch):
     args = parse_args()
     assert args.control_transport == "mcp"
     assert args.action_interface == ActionInterface.NATIVE_OSC_SEQUENCE.value
+
+
+def test_all_agent_entrypoints_default_to_luna_max(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "argv", ["launch_agent_episode.py"])
+    episode_args = parse_args()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_agent_curriculum.py",
+            "--curriculum-plan",
+            str(tmp_path / "plan.json"),
+        ],
+    )
+    curriculum_args = parse_curriculum_args()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_agent_experiment_matrix.py",
+            "--matrix",
+            str(tmp_path / "matrix.json"),
+        ],
+    )
+    matrix_args = parse_matrix_args()
+
+    for args in (episode_args, curriculum_args, matrix_args):
+        assert args.codex_model == "gpt-5.6-luna"
+        assert args.codex_effort == "max"
+
+
+def test_all_agent_entrypoints_preserve_explicit_codex_override(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_agent_episode.py",
+            "--codex-model",
+            "gpt-5.6-sol",
+            "--codex-effort",
+            "high",
+        ],
+    )
+    episode_args = parse_args()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_agent_curriculum.py",
+            "--curriculum-plan",
+            str(tmp_path / "plan.json"),
+            "--codex-model",
+            "gpt-5.6-sol",
+            "--codex-effort",
+            "high",
+        ],
+    )
+    curriculum_args = parse_curriculum_args()
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_agent_experiment_matrix.py",
+            "--matrix",
+            str(tmp_path / "matrix.json"),
+            "--codex-model",
+            "gpt-5.6-sol",
+            "--codex-effort",
+            "high",
+        ],
+    )
+    matrix_args = parse_matrix_args()
+
+    for args in (episode_args, curriculum_args, matrix_args):
+        assert args.codex_model == "gpt-5.6-sol"
+        assert args.codex_effort == "high"
+
+
+def _assert_codex_runtime_flags(command, *, model, effort):
+    assert command[command.index("--model") + 1] == model
+    assert f'model_reasoning_effort="{effort}"' in command
+
+
+def _single_episode_matrix_run():
+    return {
+        "run_id": "runtime_defaults",
+        "mode": "single_episode",
+        "profile": "level4",
+        "episode": {
+            "suite": "libero_object",
+            "task_id": 0,
+            "init_state_id": 0,
+            "seed": 0,
+            "max_agent_steps": 50,
+            "icl_condition": "none",
+            "fixed_demo_master": None,
+            "experience_context_spec": None,
+        },
+    }
+
+
+def _matrix_codex_command(args, tmp_path):
+    launch_command = build_launch_command(
+        _single_episode_matrix_run(),
+        batch_root=tmp_path / "batch",
+        launcher_root=tmp_path,
+        artifact_root=tmp_path,
+        render_gpu_device_id=0,
+        resolution=256,
+        initial_settle_control_steps=10,
+        codex_bin=args.codex_bin,
+        codex_model=args.codex_model,
+        codex_effort=args.codex_effort,
+        https_proxy=args.https_proxy,
+    )
+    assert launch_command[launch_command.index("--codex-model") + 1] == (
+        args.codex_model
+    )
+    assert launch_command[launch_command.index("--codex-effort") + 1] == (
+        args.codex_effort
+    )
+    return build_codex_command(
+        codex_bin=args.codex_bin,
+        prompt="task prompt",
+        model=launch_command[launch_command.index("--codex-model") + 1],
+        effort=launch_command[launch_command.index("--codex-effort") + 1],
+    )
+
+
+def test_default_codex_settings_reach_final_commands(monkeypatch, tmp_path):
+    monkeypatch.setattr(sys, "argv", ["launch_agent_episode.py"])
+    episode_args = parse_args()
+    episode_command = build_codex_command(
+        codex_bin="codex",
+        prompt="task prompt",
+        model=episode_args.codex_model,
+        effort=episode_args.codex_effort,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_agent_curriculum.py",
+            "--curriculum-plan",
+            str(tmp_path / "plan.json"),
+        ],
+    )
+    curriculum_args = parse_curriculum_args()
+    curriculum_command = build_codex_command(
+        codex_bin=curriculum_args.codex_bin,
+        prompt="task prompt",
+        model=curriculum_args.codex_model,
+        effort=curriculum_args.codex_effort,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_agent_experiment_matrix.py",
+            "--matrix",
+            str(tmp_path / "matrix.json"),
+        ],
+    )
+    matrix_command = _matrix_codex_command(parse_matrix_args(), tmp_path)
+
+    for command in (episode_command, curriculum_command, matrix_command):
+        _assert_codex_runtime_flags(
+            command,
+            model="gpt-5.6-luna",
+            effort="max",
+        )
+
+
+def test_explicit_codex_settings_reach_final_commands(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_agent_episode.py",
+            "--codex-model",
+            "gpt-5.6-sol",
+            "--codex-effort",
+            "high",
+        ],
+    )
+    episode_args = parse_args()
+    episode_command = build_codex_command(
+        codex_bin=episode_args.codex_bin,
+        prompt="task prompt",
+        model=episode_args.codex_model,
+        effort=episode_args.codex_effort,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "launch_agent_curriculum.py",
+            "--curriculum-plan",
+            str(tmp_path / "plan.json"),
+            "--codex-model",
+            "gpt-5.6-sol",
+            "--codex-effort",
+            "high",
+        ],
+    )
+    curriculum_args = parse_curriculum_args()
+    curriculum_command = build_codex_command(
+        codex_bin=curriculum_args.codex_bin,
+        prompt="task prompt",
+        model=curriculum_args.codex_model,
+        effort=curriculum_args.codex_effort,
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_agent_experiment_matrix.py",
+            "--matrix",
+            str(tmp_path / "matrix.json"),
+            "--codex-model",
+            "gpt-5.6-sol",
+            "--codex-effort",
+            "high",
+        ],
+    )
+    matrix_command = _matrix_codex_command(parse_matrix_args(), tmp_path)
+
+    for command in (episode_command, curriculum_command, matrix_command):
+        _assert_codex_runtime_flags(
+            command,
+            model="gpt-5.6-sol",
+            effort="high",
+        )
 
 
 def test_robomemarena_task_instruction_resolves_without_private_stage_hints():

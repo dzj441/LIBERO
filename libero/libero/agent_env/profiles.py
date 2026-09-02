@@ -46,7 +46,17 @@ PROPRIOCEPTION_FIELDS = (
     "force_torque_frame",
 )
 
-TASK_REFERENCE_SEMANTICS = "desired_final_state"
+# A task reference specifies the desired arrangement of task objects.  Robot
+# pose is deliberately excluded from the goal so that a visible robot in the
+# reference image cannot be mistaken for part of the target state.
+TASK_REFERENCE_SEMANTICS = "desired_object_arrangement"
+# v2 artifacts written before the visual-goal terminology was tightened use
+# this value.  Keep it readable during archive re-materialization, while new
+# observations always emit TASK_REFERENCE_SEMANTICS above.
+LEGACY_TASK_REFERENCE_SEMANTICS = "desired_final_state"
+_ACCEPTED_TASK_REFERENCE_SEMANTICS = frozenset(
+    (TASK_REFERENCE_SEMANTICS, LEGACY_TASK_REFERENCE_SEMANTICS)
+)
 
 
 def validate_task_reference_rgb(value: Any) -> None:
@@ -63,15 +73,16 @@ def validate_task_reference_rgb(value: Any) -> None:
 
 
 def validate_task_reference(value: Any) -> None:
-    """Validate the exact public task-reference contract."""
+    """Validate the public task-reference contract, including v2 archives."""
 
     if not isinstance(value, Mapping):
         raise TypeError("task_reference must be a mapping")
     if set(value) != {"semantics", "rgb"}:
         raise ValueError("task_reference only allows semantics and rgb")
-    if value["semantics"] != TASK_REFERENCE_SEMANTICS:
+    if value["semantics"] not in _ACCEPTED_TASK_REFERENCE_SEMANTICS:
         raise ValueError(
-            "task_reference.semantics must be 'desired_final_state'"
+            "task_reference.semantics must be one of "
+            "'desired_object_arrangement' or 'desired_final_state'"
         )
     validate_task_reference_rgb(value["rgb"])
 

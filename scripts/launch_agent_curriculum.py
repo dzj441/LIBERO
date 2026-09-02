@@ -18,6 +18,10 @@ from libero.libero.agent_env.control import (
     MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS,
     ActionInterface,
 )
+from libero.libero.agent_env.codex_defaults import (
+    DEFAULT_CODEX_EFFORT,
+    DEFAULT_CODEX_MODEL,
+)
 from libero.libero.agent_env.fixed_demo import (
     file_sha256,
     validate_p4_replay_master,
@@ -69,8 +73,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--nvidia-runtime-root", type=Path)
     parser.add_argument("--server-ready-timeout-s", type=float, default=180.0)
     parser.add_argument("--codex-bin", default="codex")
-    parser.add_argument("--codex-model")
-    parser.add_argument("--codex-effort")
+    parser.add_argument("--codex-model", default=DEFAULT_CODEX_MODEL)
+    parser.add_argument("--codex-effort", default=DEFAULT_CODEX_EFFORT)
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
     parser.add_argument(
         "--experience-guidance",
