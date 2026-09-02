@@ -1,6 +1,11 @@
+import numpy as np
 import pytest
 
-from libero.libero.agent_env.observation import infer_task_entities
+from libero.libero.agent_env.observation import (
+    MasterObservationCollector,
+    TaskEntitySelection,
+    infer_task_entities,
+)
 from libero.libero.benchmark import get_benchmark
 from libero.libero.envs.bddl_utils import robosuite_parse_problem
 
@@ -65,6 +70,41 @@ def test_missing_or_unknown_task_entities_fail_closed():
                 "fixtures": {},
                 "obj_of_interest": ["private_unknown"],
             }
+        )
+
+
+def test_collector_keeps_a_valid_task_reference_copy():
+    source = np.zeros((3, 4, 3), dtype=np.uint8)
+    collector = MasterObservationCollector(
+        object(),
+        camera_height=3,
+        camera_width=4,
+        task_entities=TaskEntitySelection(("object_1",)),
+        task_reference_rgb=source,
+    )
+
+    assert collector.task_reference_rgb is not source
+    np.testing.assert_array_equal(collector.task_reference_rgb, source)
+
+
+@pytest.mark.parametrize(
+    "reference",
+    (
+        np.zeros((3, 4, 3), dtype=np.float32),
+        np.zeros((3, 4), dtype=np.uint8),
+        np.zeros((3, 4, 1), dtype=np.uint8),
+        np.zeros((0, 4, 3), dtype=np.uint8),
+        [[[]]],
+    ),
+)
+def test_collector_rejects_invalid_task_reference_rgb(reference):
+    with pytest.raises((TypeError, ValueError)):
+        MasterObservationCollector(
+            object(),
+            camera_height=3,
+            camera_width=4,
+            task_entities=TaskEntitySelection(("object_1",)),
+            task_reference_rgb=reference,
         )
 
 

@@ -2,6 +2,7 @@ import json
 
 import numpy as np
 import pytest
+from PIL import Image
 
 from libero.libero.agent_env.artifacts import (
     replace_current_public_observation,
@@ -35,6 +36,42 @@ def test_materialized_level1_has_no_hidden_level4_files(tmp_path):
     assert "depth" not in metadata["cameras"]["head"]
     assert not (tmp_path / "head" / "depth_m.npy").exists()
     assert not (tmp_path / "annotations").exists()
+
+
+def test_materialized_task_reference_uses_a_plain_png_file(tmp_path):
+    public = project_public_observation(
+        _master(task_reference=True), "level1"
+    )
+    json_path = write_public_observation(public, tmp_path)
+    metadata = json.loads(json_path.read_text())
+    reference = metadata["task_reference"]
+
+    assert reference["semantics"] == "desired_final_state"
+    assert set(reference["rgb"]) == {"file", "media_type", "shape"}
+    assert reference["rgb"]["file"] == "task_reference/rgb.png"
+    reference_path = tmp_path / reference["rgb"]["file"]
+    assert reference_path.is_file()
+    assert reference_path.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    assert Image.open(reference_path).info == {}
+    assert reference["rgb"]["shape"] == [2, 3, 3]
+
+
+def test_current_only_replacement_removes_stale_task_reference(tmp_path):
+    current = tmp_path / "current"
+    replace_current_public_observation(
+        project_public_observation(_master(task_reference=True), "level1"),
+        current,
+    )
+    assert (current / "task_reference" / "rgb.png").is_file()
+
+    replace_current_public_observation(
+        project_public_observation(_master(frame_index=1), "level1"),
+        current,
+    )
+    assert not (current / "task_reference").exists()
+    assert "task_reference" not in json.loads(
+        (current / "observation.json").read_text()
+    )
 
 
 def test_current_only_replacement_removes_stale_modalities(tmp_path):

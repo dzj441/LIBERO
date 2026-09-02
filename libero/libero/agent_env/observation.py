@@ -18,6 +18,7 @@ from .annotation_contract import (
     task_entity_id,
 )
 from .control import matrix_to_quaternion_xyzw, quaternion_xyzw_to_matrix
+from .profiles import validate_task_reference_rgb
 
 
 CAMERA_SOURCES = {
@@ -86,6 +87,7 @@ class MasterObservationCollector:
         camera_height: int,
         camera_width: int,
         task_entities: TaskEntitySelection | None = None,
+        task_reference_rgb: np.ndarray | None = None,
     ) -> None:
         self.env = env
         self.camera_height = int(camera_height)
@@ -93,6 +95,11 @@ class MasterObservationCollector:
         self.task_entities = task_entities or infer_task_entities(
             env.env.parsed_problem
         )
+        if task_reference_rgb is not None:
+            validate_task_reference_rgb(task_reference_rgb)
+            self.task_reference_rgb = task_reference_rgb.copy()
+        else:
+            self.task_reference_rgb = None
 
     def collect(self, raw_observation: Mapping[str, Any], frame_index: int) -> dict[str, Any]:
         robot = self.env.robots[0]
@@ -174,6 +181,11 @@ class MasterObservationCollector:
             },
             "cameras": {},
         }
+        if self.task_reference_rgb is not None:
+            master["task_reference"] = {
+                "semantics": "desired_final_state",
+                "rgb": self.task_reference_rgb.copy(),
+            }
 
         for public_name, source_name in CAMERA_SOURCES.items():
             rgb_key = f"{source_name}_image"

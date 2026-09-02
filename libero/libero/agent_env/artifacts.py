@@ -15,6 +15,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .annotation_contract import validate_task_entity_mapping
+from .profiles import validate_task_reference
 
 
 def write_public_observation(
@@ -29,6 +30,23 @@ def write_public_observation(
     output_directory = Path(output_directory)
     output_directory.mkdir(parents=True, exist_ok=True)
     metadata = deepcopy(dict(observation))
+
+    if "task_reference" in metadata:
+        task_reference = metadata["task_reference"]
+        validate_task_reference(task_reference)
+        reference_rgb = np.array(task_reference["rgb"], copy=True)
+        reference_directory = output_directory / "task_reference"
+        reference_directory.mkdir(parents=True, exist_ok=True)
+        reference_path = reference_directory / "rgb.png"
+        Image.fromarray(reference_rgb).save(reference_path)
+        metadata["task_reference"] = {
+            "semantics": task_reference["semantics"],
+            "rgb": {
+                "file": str(reference_path.relative_to(output_directory)),
+                "media_type": "image/png",
+                "shape": list(reference_rgb.shape),
+            },
+        }
 
     for camera_name in ("head", "wrist"):
         camera_directory = output_directory / camera_name

@@ -17,6 +17,7 @@ from .control import OSCControlConfig
 from .environment import LiberoAgentEnv
 from .observation import TaskEntitySelection
 from .profiles import ObservationProfile
+from .task_references import load_task_reference_rgb
 
 
 def make_libero_agent_env(
@@ -103,6 +104,7 @@ def make_libero_agent_env(
         camera_height=camera_height,
         camera_width=camera_width,
         task_instruction=instruction,
+        task_reference_rgb=load_task_reference_rgb(suite, task_id),
         initial_state=np.asarray(init_states[init_state_id]),
         task_entities=task_entities,
         control_config=control_config,

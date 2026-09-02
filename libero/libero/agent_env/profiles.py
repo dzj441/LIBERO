@@ -10,6 +10,8 @@ from copy import deepcopy
 from enum import IntEnum
 from typing import Any, Mapping
 
+import numpy as np
+
 from .annotation_contract import (
     TASK_ENTITY_ANNOTATION_SCHEMA_VERSION,
     validate_task_entity_mapping,
@@ -43,6 +45,35 @@ PROPRIOCEPTION_FIELDS = (
     "eef_twist_robot_base_6d",
     "force_torque_frame",
 )
+
+TASK_REFERENCE_SEMANTICS = "desired_final_state"
+
+
+def validate_task_reference_rgb(value: Any) -> None:
+    """Validate a task-reference image without silently changing its type."""
+
+    if not isinstance(value, np.ndarray):
+        raise TypeError("task_reference.rgb must be a numpy.ndarray")
+    if value.dtype != np.dtype(np.uint8):
+        raise TypeError("task_reference.rgb must have dtype uint8")
+    if value.ndim != 3 or value.shape[2] != 3:
+        raise ValueError("task_reference.rgb must have HWC shape with 3 channels")
+    if any(int(size) <= 0 for size in value.shape):
+        raise ValueError("task_reference.rgb dimensions must be positive")
+
+
+def validate_task_reference(value: Any) -> None:
+    """Validate the exact public task-reference contract."""
+
+    if not isinstance(value, Mapping):
+        raise TypeError("task_reference must be a mapping")
+    if set(value) != {"semantics", "rgb"}:
+        raise ValueError("task_reference only allows semantics and rgb")
+    if value["semantics"] != TASK_REFERENCE_SEMANTICS:
+        raise ValueError(
+            "task_reference.semantics must be 'desired_final_state'"
+        )
+    validate_task_reference_rgb(value["rgb"])
 
 
 class ObservationProfile(IntEnum):
@@ -141,6 +172,14 @@ def project_public_observation(
         "state": _copy_required_fields(master["state"], STATE_FIELDS),
         "cameras": {},
     }
+
+    if "task_reference" in master:
+        validate_task_reference(master["task_reference"])
+        task_reference = master["task_reference"]
+        public["task_reference"] = {
+            "semantics": task_reference["semantics"],
+            "rgb": np.array(task_reference["rgb"], copy=True),
+        }
 
     for public_camera_name in ("head", "wrist"):
         source_camera = master["cameras"][public_camera_name]

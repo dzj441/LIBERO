@@ -45,6 +45,7 @@ class LiberoAgentEnv:
         task_instruction: str,
         initial_state: np.ndarray | None = None,
         task_entities: TaskEntitySelection | None = None,
+        task_reference_rgb: np.ndarray | None = None,
         control_config: OSCControlConfig | None = None,
         initial_settle_control_steps: int = 10,
         max_agent_steps: int | None = None,
@@ -70,6 +71,7 @@ class LiberoAgentEnv:
             camera_height=camera_height,
             camera_width=camera_width,
             task_entities=task_entities,
+            task_reference_rgb=task_reference_rgb,
         )
         self.private_control_step_callback = private_control_step_callback
         self.private_episode_evaluator = private_episode_evaluator

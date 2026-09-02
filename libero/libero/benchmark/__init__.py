@@ -212,6 +212,34 @@ class LIBERO_10(Benchmark):
 
 
 @register_benchmark
+class LIBERO_ARRANGE_TABLE(Benchmark):
+    """Single-task goal-image variant of the LIBERO-10 table task.
+
+    The underlying BDDL and initial-state assets are deliberately borrowed
+    from the official LIBERO-10 task.  Only the public language instruction is
+    changed so the task can expose a visual arrangement goal without copying
+    or modifying the upstream task files.
+    """
+
+    _SOURCE_TASK = (
+        "LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_"
+        "yellow_and_white_mug_on_the_right_plate"
+    )
+
+    def __init__(self, task_order_index=0):
+        super().__init__(task_order_index=task_order_index)
+        if task_order_index != 0:
+            raise ValueError(
+                "libero_arrange_table exposes exactly one task and only supports "
+                "task_order_index=0"
+            )
+        self.name = "libero_arrange_table"
+        source_task = task_maps["libero_10"][self._SOURCE_TASK]
+        self.tasks = (source_task._replace(language="Arrange Table"),)
+        self.n_tasks = 1
+
+
+@register_benchmark
 class LIBERO_100(Benchmark):
     def __init__(self, task_order_index=0):
         super().__init__(task_order_index=task_order_index)

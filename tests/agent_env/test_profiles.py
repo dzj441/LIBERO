@@ -12,7 +12,7 @@ from libero.libero.agent_env.annotation_contract import (
 )
 
 
-def _master(frame_index=0):
+def _master(frame_index=0, *, task_reference=False):
     annotation = {
         "visible": True,
         "visible_pixel_count": 4,
@@ -28,7 +28,7 @@ def _master(frame_index=0):
         "matrix_T_robot_base_from_camera_opencv_4x4": np.eye(4),
         "private_camera_target": [1, 2, 3],
     }
-    return {
+    master = {
         "observation_id": f"obs_{frame_index:06d}",
         "frame_index": frame_index,
         "sim_time_s": 1.25,
@@ -80,6 +80,12 @@ def _master(frame_index=0):
         "reward": 1.0,
         "checker_details": {"secret": True},
     }
+    if task_reference:
+        master["task_reference"] = {
+            "semantics": "desired_final_state",
+            "rgb": np.arange(2 * 3 * 3, dtype=np.uint8).reshape(2, 3, 3),
+        }
+    return master
 
 
 @pytest.mark.parametrize("profile", list(ObservationProfile))
@@ -113,6 +119,79 @@ def test_profile_modalities_are_strict_supersets():
 def test_annotations_are_initial_observation_only():
     public = project_public_observation(_master(frame_index=1), "level4")
     assert "annotations" not in public
+
+
+@pytest.mark.parametrize("profile", list(ObservationProfile))
+def test_all_profiles_preserve_task_reference(profile):
+    public = project_public_observation(
+        _master(task_reference=True), profile
+    )
+
+    assert public["task_reference"]["semantics"] == "desired_final_state"
+    np.testing.assert_array_equal(
+        public["task_reference"]["rgb"],
+        _master(task_reference=True)["task_reference"]["rgb"],
+    )
+
+
+def test_task_reference_is_persistent_across_frames():
+    first = project_public_observation(
+        _master(frame_index=0, task_reference=True), "level1"
+    )
+    later = project_public_observation(
+        _master(frame_index=1, task_reference=True), "level1"
+    )
+
+    assert first["task_reference"]["semantics"] == "desired_final_state"
+    assert later["task_reference"]["semantics"] == "desired_final_state"
+    np.testing.assert_array_equal(
+        first["task_reference"]["rgb"], later["task_reference"]["rgb"]
+    )
+
+
+@pytest.mark.parametrize(
+    "reference",
+    (
+        {"semantics": "desired_final_state", "rgb": [[[]]]},
+        {
+            "semantics": "desired_final_state",
+            "rgb": np.zeros((2, 2, 3), dtype=np.float32),
+        },
+        {
+            "semantics": "desired_final_state",
+            "rgb": np.zeros((2, 2), dtype=np.uint8),
+        },
+        {
+            "semantics": "desired_final_state",
+            "rgb": np.zeros((2, 2, 1), dtype=np.uint8),
+        },
+        {
+            "semantics": "desired_final_state",
+            "rgb": np.zeros((0, 2, 3), dtype=np.uint8),
+        },
+        {
+            "semantics": "desired_final_state",
+            "rgb": np.zeros((2, 2, 3), dtype=np.uint8),
+            "extra": "not allowed",
+        },
+        {
+            "semantics": "not_the_contract",
+            "rgb": np.zeros((2, 2, 3), dtype=np.uint8),
+        },
+    ),
+)
+def test_invalid_task_reference_is_rejected(reference):
+    master = _master()
+    master["task_reference"] = reference
+    with pytest.raises((TypeError, ValueError)):
+        project_public_observation(master, "level1")
+
+
+def test_regular_master_has_no_task_reference():
+    for profile in ObservationProfile:
+        assert "task_reference" not in project_public_observation(
+            _master(), profile
+        )
 
 
 def test_task_entities_are_anonymous_variable_cardinality_and_camera_aligned():

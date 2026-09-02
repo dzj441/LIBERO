@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
+import libero.libero.agent_env.environment as environment_module
 from libero.libero.agent_env.environment import LiberoAgentEnv
 
 
@@ -82,3 +84,38 @@ def test_private_checker_remains_authoritative_when_bddl_diagnostic_breaks():
         "error_type": "KeyError",
         "message": "'missing_region'",
     }
+
+
+def test_constructor_forwards_task_reference_to_observation_collector(monkeypatch):
+    captured = {}
+
+    class _FakeCollector:
+        def __init__(
+            self,
+            env,
+            camera_height,
+            camera_width,
+            task_entities=None,
+            task_reference_rgb=None,
+        ):
+            captured["task_reference_rgb"] = task_reference_rgb
+
+    class _FakeExecutor:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(environment_module, "MasterObservationCollector", _FakeCollector)
+    monkeypatch.setattr(environment_module, "BaseFrameOSCExecutor", _FakeExecutor)
+    monkeypatch.setattr(environment_module, "NativeOSCSequenceExecutor", _FakeExecutor)
+
+    reference = np.zeros((2, 3, 3), dtype=np.uint8)
+    LiberoAgentEnv(
+        object(),
+        profile="level1",
+        camera_height=2,
+        camera_width=3,
+        task_instruction="Arrange Table",
+        task_reference_rgb=reference,
+    )
+
+    assert captured["task_reference_rgb"] is reference
