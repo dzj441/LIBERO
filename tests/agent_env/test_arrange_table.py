@@ -16,21 +16,18 @@ from libero.libero.envs.bddl_utils import robosuite_parse_problem
 from scripts.launch_agent_episode import _task_instruction
 
 
-SOURCE_TASK = (
-    "LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_"
-    "yellow_and_white_mug_on_the_right_plate"
-)
+TASK_NAME = "arrange_table"
 
 
-def test_arrange_table_is_a_single_reused_libero10_task():
+def test_arrange_table_is_a_single_custom_task():
     suite = get_benchmark("libero_arrange_table")()
 
     assert suite.get_num_tasks() == 1
     task = suite.get_task(0)
-    assert task.name == SOURCE_TASK
-    assert task.problem_folder == "libero_10"
-    assert task.bddl_file == f"{SOURCE_TASK}.bddl"
-    assert task.init_states_file == f"{SOURCE_TASK}.pruned_init"
+    assert task.name == TASK_NAME
+    assert task.problem_folder == "libero_arrange_table"
+    assert task.bddl_file == f"{TASK_NAME}.bddl"
+    assert task.init_states_file == f"{TASK_NAME}.pruned_init"
     assert task.language == "Arrange Table"
     assert Path(suite.get_task_bddl_file_path(0)).is_file()
     assert len(suite.get_task_init_states(0)) > 0
@@ -47,9 +44,38 @@ def test_arrange_table_bddl_is_parseable_and_has_finite_init_state():
     suite = get_benchmark("libero_arrange_table")()
     task = suite.get_task(0)
     parsed = robosuite_parse_problem(suite.get_task_bddl_file_path(0))
-    assert parsed["goal_state"]
+    assert parsed["goal_state"] == [
+        ["on", "porcelain_mug_1", "plate_1"],
+        ["on", "white_yellow_mug_1", "plate_2"],
+        ["in", "butter_1", "basket_1_contain_region"],
+    ]
+    assert parsed["obj_of_interest"] == [
+        "porcelain_mug_1",
+        "white_yellow_mug_1",
+        "butter_1",
+        "plate_1",
+        "plate_2",
+        "basket_1",
+    ]
+    assert parsed["initial_state"] == [
+        ["on", "plate_1", "living_room_table_plate_left_region"],
+        ["on", "plate_2", "living_room_table_plate_right_region"],
+        ["on", "basket_1", "living_room_table_basket_init_region"],
+        [
+            "on",
+            "porcelain_mug_1",
+            "living_room_table_porcelain_mug_init_region",
+        ],
+        [
+            "on",
+            "white_yellow_mug_1",
+            "living_room_table_white_yellow_mug_init_region",
+        ],
+        ["on", "butter_1", "living_room_table_butter_init_region"],
+    ]
     init_states = suite.get_task_init_states(0)
-    assert np.isfinite(np.asarray(init_states[0])).all()
+    assert np.asarray(init_states).shape == (50, 97)
+    assert np.isfinite(np.asarray(init_states)).all()
 
 
 def test_task_reference_allowlist_returns_only_arrange_table_goal():

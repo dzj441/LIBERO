@@ -213,18 +213,9 @@ class LIBERO_10(Benchmark):
 
 @register_benchmark
 class LIBERO_ARRANGE_TABLE(Benchmark):
-    """Single-task goal-image variant of the LIBERO-10 table task.
+    """Single-task visual-goal table-arrangement benchmark."""
 
-    The underlying BDDL and initial-state assets are deliberately borrowed
-    from the official LIBERO-10 task.  Only the public language instruction is
-    changed so the task can expose a visual arrangement goal without copying
-    or modifying the upstream task files.
-    """
-
-    _SOURCE_TASK = (
-        "LIVING_ROOM_SCENE5_put_the_white_mug_on_the_left_plate_and_put_the_"
-        "yellow_and_white_mug_on_the_right_plate"
-    )
+    _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     def __init__(self, task_order_index=0):
         super().__init__(task_order_index=task_order_index)
@@ -234,9 +225,36 @@ class LIBERO_ARRANGE_TABLE(Benchmark):
                 "task_order_index=0"
             )
         self.name = "libero_arrange_table"
-        source_task = task_maps["libero_10"][self._SOURCE_TASK]
-        self.tasks = (source_task._replace(language="Arrange Table"),)
+        self.tasks = (
+            Task(
+                name="arrange_table",
+                language="Arrange Table",
+                problem="Libero",
+                problem_folder="libero_arrange_table",
+                bddl_file="arrange_table.bddl",
+                init_states_file="arrange_table.pruned_init",
+            ),
+        )
         self.n_tasks = 1
+
+    def get_task_bddl_file_path(self, i):
+        task = self.get_task(i)
+        return os.path.join(
+            self._PACKAGE_ROOT,
+            "bddl_files",
+            task.problem_folder,
+            task.bddl_file,
+        )
+
+    def get_task_init_states(self, i):
+        task = self.get_task(i)
+        path = os.path.join(
+            self._PACKAGE_ROOT,
+            "init_files",
+            task.problem_folder,
+            task.init_states_file,
+        )
+        return torch.load(path, weights_only=False)
 
 
 @register_benchmark
