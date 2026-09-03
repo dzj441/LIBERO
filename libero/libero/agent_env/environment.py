@@ -49,6 +49,9 @@ class LiberoAgentEnv:
         control_config: OSCControlConfig | None = None,
         initial_settle_control_steps: int = 10,
         max_agent_steps: int | None = None,
+        native_sequence_submission_limit: int | None = (
+            MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS
+        ),
         private_control_step_callback: (
             Callable[[Mapping[str, Any]], None] | None
         ) = None,
@@ -58,6 +61,13 @@ class LiberoAgentEnv:
             raise ValueError("initial_settle_control_steps must be non-negative")
         if max_agent_steps is not None and max_agent_steps <= 0:
             raise ValueError("max_agent_steps must be positive when provided")
+        if (
+            native_sequence_submission_limit is not None
+            and native_sequence_submission_limit <= 0
+        ):
+            raise ValueError(
+                "native_sequence_submission_limit must be positive when provided"
+            )
         self.env = env
         self.profile = ObservationProfile.parse(profile)
         self.task_instruction = str(task_instruction)
@@ -66,6 +76,7 @@ class LiberoAgentEnv:
         )
         self.initial_settle_control_steps = int(initial_settle_control_steps)
         self.max_agent_steps = max_agent_steps
+        self.native_sequence_submission_limit = native_sequence_submission_limit
         self.collector = MasterObservationCollector(
             env,
             camera_height=camera_height,
@@ -145,12 +156,12 @@ class LiberoAgentEnv:
         """Execute 1--20 exact normalized OSC actions as one Agent submission."""
 
         self._require_active()
-        configured_limit = self.max_agent_steps
-        sequence_limit = (
-            MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS
-            if configured_limit is None
-            else min(configured_limit, MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS)
+        configured_limits = (
+            self.max_agent_steps,
+            self.native_sequence_submission_limit,
         )
+        finite_limits = [limit for limit in configured_limits if limit is not None]
+        sequence_limit = min(finite_limits) if finite_limits else None
         self._require_agent_step_budget(sequence_limit)
         raw_observation, execution = self.native_sequence_executor.execute(actions)
         self._latest_raw_observation = raw_observation

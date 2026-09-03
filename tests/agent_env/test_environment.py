@@ -21,13 +21,17 @@ class _FakeNativeSequenceExecutor:
         )
 
 
-def _native_only_agent_env(max_agent_steps=None):
+def _native_only_agent_env(
+    max_agent_steps=None,
+    native_sequence_submission_limit=environment_module.MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS,
+):
     agent_env = LiberoAgentEnv.__new__(LiberoAgentEnv)
     agent_env._started = True
     agent_env._finished = False
     agent_env._agent_step_index = 0
     agent_env._latest_raw_observation = {"raw": 0}
     agent_env.max_agent_steps = max_agent_steps
+    agent_env.native_sequence_submission_limit = native_sequence_submission_limit
     agent_env.native_sequence_executor = _FakeNativeSequenceExecutor()
     agent_env._public_observation = lambda frame_index: {
         "observation_id": f"obs_{frame_index:06d}",
@@ -52,6 +56,18 @@ def test_native_sequence_honors_stricter_configured_submission_limit():
     agent_env.step_osc_sequence([[0.0] * 7])
     with pytest.raises(RuntimeError, match=r"agent step limit reached \(2\)"):
         agent_env.step_osc_sequence([[0.0] * 7])
+
+
+def test_native_sequence_can_be_unlimited_for_manual_teleoperation():
+    agent_env = _native_only_agent_env(
+        max_agent_steps=None,
+        native_sequence_submission_limit=None,
+    )
+    for _ in range(environment_module.MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS + 1):
+        agent_env.step_osc_sequence([[0.0] * 7])
+    assert agent_env.native_sequence_executor.calls == (
+        environment_module.MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS + 1
+    )
 
 
 class _BrokenBddlDiagnosticEnv:

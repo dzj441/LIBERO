@@ -376,6 +376,7 @@ def main() -> int:
         camera_width=args.resolution,
         render_gpu_device_id=args.render_gpu_device_id,
         max_agent_steps=args.max_agent_steps,
+        native_sequence_submission_limit=None,
         private_control_step_callback=recorder.append_raw_observation,
     )
     service = AgentEpisodeService(

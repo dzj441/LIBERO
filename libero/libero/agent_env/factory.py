@@ -13,7 +13,7 @@ import libero.libero as libero_package
 from libero.libero.benchmark import get_benchmark
 from libero.libero.envs import OffScreenRenderEnv
 
-from .control import OSCControlConfig
+from .control import MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS, OSCControlConfig
 from .environment import LiberoAgentEnv
 from .observation import TaskEntitySelection
 from .profiles import ObservationProfile
@@ -33,6 +33,9 @@ def make_libero_agent_env(
     control_config: OSCControlConfig | None = None,
     initial_settle_control_steps: int = 10,
     max_agent_steps: int | None = None,
+    native_sequence_submission_limit: int | None = (
+        MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS
+    ),
     private_control_step_callback: (
         Callable[[Mapping[str, Any]], None] | None
     ) = None,
@@ -110,6 +113,7 @@ def make_libero_agent_env(
         control_config=control_config,
         initial_settle_control_steps=initial_settle_control_steps,
         max_agent_steps=max_agent_steps,
+        native_sequence_submission_limit=native_sequence_submission_limit,
         private_control_step_callback=private_control_step_callback,
     )
 
