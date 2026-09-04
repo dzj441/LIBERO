@@ -7,6 +7,12 @@ from .control import (
     EEFCommand,
     OSCControlConfig,
 )
+from .arrange_table import (
+    ARRANGE_TABLE_SUITE,
+    ARRANGE_TABLE_TEXT_GOAL_TASK_ID,
+    ARRANGE_TABLE_VISUAL_GOAL_TASK_ID,
+    ArrangeTableTextGoalEvaluator,
+)
 from .environment import LiberoAgentEnv
 from .factory import make_libero_agent_env
 from .observation import TaskEntitySelection, infer_task_entities
@@ -35,6 +41,10 @@ from .robomemarena import (
 __all__ = [
     "EEFCommand",
     "ActionInterface",
+    "ARRANGE_TABLE_SUITE",
+    "ARRANGE_TABLE_TEXT_GOAL_TASK_ID",
+    "ARRANGE_TABLE_VISUAL_GOAL_TASK_ID",
+    "ArrangeTableTextGoalEvaluator",
     "LiberoAgentEnv",
     "ObservationProfile",
     "OSCControlConfig",

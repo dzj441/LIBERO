@@ -1,7 +1,12 @@
-# Arrange Table visual-goal task
+# Arrange Table goal-specification variants
 
-The public instruction is `Arrange Table`. A persistent RGB task reference
-shows the desired object arrangement.
+The suite exposes the same physical scene, initial-state bank, action space,
+and arrangement objective through two public goal specifications:
+
+| Task ID | Public instruction | Goal image | Authoritative checker |
+| ---: | --- | --- | --- |
+| 0 | `Arrange the table according to the provided goal image.` | yes | native BDDL conjunction |
+| 1 | `Arrange the table. For a clean table, the butter should be placed inside the basket, and each cup should be placed on a plate.` | no | permutation-invariant private final checker |
 
 ## Scene contract
 
@@ -9,14 +14,29 @@ shows the desired object arrangement.
 - Manipulated objects: a porcelain mug, a yellow-and-white mug, and butter.
 - Initially, neither mug is on its assigned plate and the butter is not in the
   basket.
-- The task succeeds only when all three native LIBERO predicates hold:
+- The visual-goal task succeeds only when all three native LIBERO predicates
+  hold:
   - `On(porcelain_mug_1, plate_1)`
   - `On(white_yellow_mug_1, plate_2)`
   - `In(butter_1, basket_1_contain_region)`
 
-The checker is the normal LIBERO BDDL checker, so `On` requires physical
-support/contact and `In` requires contact plus geometric containment. It does
-not use image similarity.
+The visual checker is the normal LIBERO BDDL checker, so `On` requires
+physical support/contact and `In` requires contact plus geometric containment.
+It does not use image similarity.
+
+The textual instruction does not assign cup identities to particular plates.
+Its evaluator therefore accepts either one-to-one cup assignment while using
+the same unmodified native predicates:
+
+```text
+In(butter, basket)
+AND ((On(cup_A, plate_1) AND On(cup_B, plate_2))
+     OR (On(cup_A, plate_2) AND On(cup_B, plate_1)))
+```
+
+The private checker changes neither the global `On` predicate nor the physical
+task. Its detailed predicate result remains evaluator-private; the Agent sees
+only the ordinary final success response.
 
 ## Rebuild generated assets
 
@@ -41,15 +61,16 @@ scripts/launch_manual_osc_teleop_egl.sh \
   --output-root v1temp/arrange_table_teleop
 ```
 
-Open port 8766 in a browser. The page shows the desired arrangement together
-with the live head and wrist cameras. It sends normalized native OSC control
-cycles through the same `AgentEpisodeService` used by benchmark rollouts and
-saves `actions.jsonl`, private observations, the continuous video, and the
-official final checker result beneath a unique run directory. No X server or
-`DISPLAY` is required. Unlike an Agent rollout, manual collection has no total
-action-submission budget: it continues until the operator presses Finish or
-stops the process. Each individual request remains capped at 20 controller
-cycles so the browser receives timely visual feedback.
+Open port 8766 in a browser. This teleoperator targets task 0 and shows the
+desired arrangement together with the live head and wrist cameras. It sends
+normalized native OSC control cycles through the same `AgentEpisodeService`
+used by benchmark rollouts and saves `actions.jsonl`, private observations, the
+continuous video, and the official final checker result beneath a unique run
+directory. No X server or `DISPLAY` is required. Unlike an Agent rollout,
+manual collection has no total action-submission budget: it continues until
+the operator presses Finish or stops the process. Each individual request
+remains capped at 20 controller cycles so the browser receives timely visual
+feedback.
 
 The existing LIBERO collector remains usable from a graphical X11 session:
 

@@ -1,4 +1,4 @@
-"""Contract tests for the single-task Arrange Table goal-image variant."""
+"""Contracts for the matched Arrange Table goal-specification variants."""
 
 from pathlib import Path
 
@@ -6,6 +6,10 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from libero.libero.agent_env.arrange_table import (
+    ArrangeTableTextGoalEvaluator,
+    arrange_table_private_evaluator,
+)
 from libero.libero.agent_env import task_references
 from libero.libero.agent_env.task_references import (
     load_task_reference_rgb,
@@ -17,27 +21,39 @@ from scripts.launch_agent_episode import _task_instruction
 
 
 TASK_NAME = "arrange_table"
+VISUAL_GOAL_INSTRUCTION = (
+    "Arrange the table according to the provided goal image."
+)
+TEXT_GOAL_INSTRUCTION = (
+    "Arrange the table. For a clean table, the butter should be placed inside "
+    "the basket, and each cup should be placed on a plate."
+)
 
 
-def test_arrange_table_is_a_single_custom_task():
+def test_arrange_table_exposes_two_matched_goal_variants():
     suite = get_benchmark("libero_arrange_table")()
 
-    assert suite.get_num_tasks() == 1
-    task = suite.get_task(0)
-    assert task.name == TASK_NAME
-    assert task.problem_folder == "libero_arrange_table"
-    assert task.bddl_file == f"{TASK_NAME}.bddl"
-    assert task.init_states_file == f"{TASK_NAME}.pruned_init"
-    assert task.language == "Arrange Table"
-    assert Path(suite.get_task_bddl_file_path(0)).is_file()
-    assert len(suite.get_task_init_states(0)) > 0
+    assert suite.get_num_tasks() == 2
+    visual_task = suite.get_task(0)
+    text_task = suite.get_task(1)
+    assert visual_task.name == TASK_NAME
+    assert text_task.name == "arrange_table_text_goal"
+    assert visual_task.language == VISUAL_GOAL_INSTRUCTION
+    assert text_task.language == TEXT_GOAL_INSTRUCTION
+    for task_id, task in enumerate((visual_task, text_task)):
+        assert task.problem_folder == "libero_arrange_table"
+        assert task.bddl_file == f"{TASK_NAME}.bddl"
+        assert task.init_states_file == f"{TASK_NAME}.pruned_init"
+        assert Path(suite.get_task_bddl_file_path(task_id)).is_file()
+        assert len(suite.get_task_init_states(task_id)) > 0
 
     with pytest.raises(ValueError, match="task_order_index=0"):
         get_benchmark("libero_arrange_table")(task_order_index=1)
 
 
-def test_arrange_table_instruction_is_exact():
-    assert _task_instruction("libero_arrange_table", 0) == "Arrange Table"
+def test_arrange_table_instructions_are_exact():
+    assert _task_instruction("libero_arrange_table", 0) == VISUAL_GOAL_INSTRUCTION
+    assert _task_instruction("libero_arrange_table", 1) == TEXT_GOAL_INSTRUCTION
 
 
 def test_arrange_table_bddl_is_parseable_and_has_finite_init_state():
@@ -114,3 +130,87 @@ def test_task_reference_rejects_symlink_components(monkeypatch, tmp_path):
 
     with pytest.raises(ValueError, match="must not contain symlinks"):
         resolve_task_reference_path("libero_arrange_table", 0)
+
+
+class _FakeDomain:
+    def __init__(self, true_predicates):
+        self.true_predicates = {tuple(predicate) for predicate in true_predicates}
+
+    def _eval_predicate(self, predicate):
+        return tuple(predicate) in self.true_predicates
+
+
+class _FakeEnv:
+    def __init__(self, true_predicates):
+        self.env = _FakeDomain(true_predicates)
+
+
+@pytest.mark.parametrize(
+    "cup_predicates",
+    [
+        (
+            ("on", "porcelain_mug_1", "plate_1"),
+            ("on", "white_yellow_mug_1", "plate_2"),
+        ),
+        (
+            ("on", "porcelain_mug_1", "plate_2"),
+            ("on", "white_yellow_mug_1", "plate_1"),
+        ),
+    ],
+)
+def test_text_goal_checker_accepts_either_one_to_one_cup_assignment(
+    cup_predicates,
+):
+    evaluator = ArrangeTableTextGoalEvaluator(
+        _FakeEnv(
+            (
+                ("in", "butter_1", "basket_1_contain_region"),
+                *cup_predicates,
+            )
+        )
+    )
+
+    result = evaluator.result()
+
+    assert result["success"] is True
+    assert sum(result["cup_assignment_results"]) == 1
+
+
+def test_text_goal_checker_rejects_missing_butter_or_non_distinct_plates():
+    same_plate = ArrangeTableTextGoalEvaluator(
+        _FakeEnv(
+            (
+                ("in", "butter_1", "basket_1_contain_region"),
+                ("on", "porcelain_mug_1", "plate_1"),
+                ("on", "white_yellow_mug_1", "plate_1"),
+            )
+        )
+    )
+    missing_butter = ArrangeTableTextGoalEvaluator(
+        _FakeEnv(
+            (
+                ("on", "porcelain_mug_1", "plate_1"),
+                ("on", "white_yellow_mug_1", "plate_2"),
+            )
+        )
+    )
+
+    assert same_plate.result()["success"] is False
+    assert missing_butter.result()["success"] is False
+
+
+def test_private_checker_is_selected_only_for_text_goal_variant():
+    env = _FakeEnv(())
+
+    assert arrange_table_private_evaluator(
+        env, suite="libero_arrange_table", task_id=0
+    ) is None
+    assert isinstance(
+        arrange_table_private_evaluator(
+            env, suite="libero_arrange_table", task_id=1
+        ),
+        ArrangeTableTextGoalEvaluator,
+    )
+    assert arrange_table_private_evaluator(
+        env, suite="libero_object", task_id=1
+    ) is None

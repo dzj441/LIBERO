@@ -30,10 +30,11 @@ _ARRANGE_TABLE_REFERENCE: Final[Path] = (
 def resolve_task_reference_path(suite: str, task_id: int) -> Path | None:
     """Resolve the allow-listed reference path for ``suite`` and ``task_id``.
 
-    Only the Arrange Table task has a task-level RGB reference.  ``None`` is
-    returned for every other suite/task rather than attempting to interpret a
-    caller-provided path.  All path components are checked for symlinks and
-    containment under the repository asset root.
+    Only the Arrange Table visual-goal variant (task 0) has a task-level RGB
+    reference. ``None`` is returned for its textual variant and every other
+    suite/task rather than attempting to interpret a caller-provided path. All
+    path components are checked for symlinks and containment under the
+    repository asset root.
     """
 
     if suite != "libero_arrange_table" or task_id != 0:

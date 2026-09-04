@@ -213,7 +213,7 @@ class LIBERO_10(Benchmark):
 
 @register_benchmark
 class LIBERO_ARRANGE_TABLE(Benchmark):
-    """Single-task visual-goal table-arrangement benchmark."""
+    """Matched visual- and textual-goal table-arrangement variants."""
 
     _PACKAGE_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -221,21 +221,32 @@ class LIBERO_ARRANGE_TABLE(Benchmark):
         super().__init__(task_order_index=task_order_index)
         if task_order_index != 0:
             raise ValueError(
-                "libero_arrange_table exposes exactly one task and only supports "
-                "task_order_index=0"
+                "libero_arrange_table only supports task_order_index=0"
             )
         self.name = "libero_arrange_table"
         self.tasks = (
             Task(
                 name="arrange_table",
-                language="Arrange Table",
+                language="Arrange the table according to the provided goal image.",
+                problem="Libero",
+                problem_folder="libero_arrange_table",
+                bddl_file="arrange_table.bddl",
+                init_states_file="arrange_table.pruned_init",
+            ),
+            Task(
+                name="arrange_table_text_goal",
+                language=(
+                    "Arrange the table. For a clean table, the butter should be "
+                    "placed inside the basket, and each cup should be placed on "
+                    "a plate."
+                ),
                 problem="Libero",
                 problem_folder="libero_arrange_table",
                 bddl_file="arrange_table.bddl",
                 init_states_file="arrange_table.pruned_init",
             ),
         )
-        self.n_tasks = 1
+        self.n_tasks = len(self.tasks)
 
     def get_task_bddl_file_path(self, i):
         task = self.get_task(i)

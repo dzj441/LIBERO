@@ -13,6 +13,7 @@ import libero.libero as libero_package
 from libero.libero.benchmark import get_benchmark
 from libero.libero.envs import OffScreenRenderEnv
 
+from .arrange_table import arrange_table_private_evaluator
 from .control import MAX_NATIVE_OSC_SEQUENCE_SUBMISSIONS, OSCControlConfig
 from .environment import LiberoAgentEnv
 from .observation import TaskEntitySelection
@@ -101,6 +102,11 @@ def make_libero_agent_env(
     )
     env.seed(seed)
     instruction = " ".join(task.language.split())
+    private_episode_evaluator = arrange_table_private_evaluator(
+        env,
+        suite=suite,
+        task_id=task_id,
+    )
     return LiberoAgentEnv(
         env,
         profile=profile,
@@ -115,6 +121,7 @@ def make_libero_agent_env(
         max_agent_steps=max_agent_steps,
         native_sequence_submission_limit=native_sequence_submission_limit,
         private_control_step_callback=private_control_step_callback,
+        private_episode_evaluator=private_episode_evaluator,
     )
 
 
