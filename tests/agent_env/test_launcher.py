@@ -96,6 +96,7 @@ def test_launcher_defaults_to_mcp_native_osc(monkeypatch):
     args = parse_args()
     assert args.control_transport == "mcp"
     assert args.action_interface == ActionInterface.NATIVE_OSC_SEQUENCE.value
+    assert args.codex_execution_mode == "exec"
 
 
 def test_all_agent_entrypoints_default_to_luna_max(monkeypatch, tmp_path):
@@ -535,6 +536,31 @@ def test_codex_command_is_persistent_one_shot_and_noninteractive():
     assert "--ephemeral" not in command
     assert "--no-alt-screen" not in command
     assert command[-1] == "task prompt"
+
+
+def test_interactive_codex_command_opens_tui_without_sending_prompt(tmp_path):
+    server = tmp_path / "bin/libero_mcp_server"
+    server.parent.mkdir()
+    server.write_text("#!/bin/sh\n", encoding="utf-8")
+
+    command = build_codex_command(
+        codex_bin="codex",
+        prompt="operator must paste this prompt",
+        model="gpt-test",
+        effort="high",
+        workspace=tmp_path,
+        control_transport="mcp",
+        execution_mode="interactive",
+    )
+
+    assert command[0] == "codex"
+    assert "exec" not in command
+    assert "--no-alt-screen" in command
+    assert "--skip-git-repo-check" not in command
+    assert "operator must paste this prompt" not in command
+    assert "--dangerously-bypass-approvals-and-sandbox" in command
+    assert "--dangerously-bypass-hook-trust" in command
+    assert f'mcp_servers.libero.command="{server}"' in "\n".join(command)
 
 
 def test_codex_command_injects_required_workspace_local_mcp(tmp_path):

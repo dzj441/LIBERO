@@ -49,6 +49,7 @@ from libero.libero.agent_env.robomemarena import (
 
 
 CONTROL_TRANSPORTS = ("cli", "mcp")
+CODEX_EXECUTION_MODES = ("exec", "interactive")
 MCP_SERVER_NAME = "libero"
 MCP_TOOL_NAMES = ("start_episode", "osc_sequence", "finish_episode")
 
@@ -93,6 +94,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--codex-bin", default="codex")
     parser.add_argument("--codex-model", default=DEFAULT_CODEX_MODEL)
     parser.add_argument("--codex-effort", default=DEFAULT_CODEX_EFFORT)
+    parser.add_argument(
+        "--codex-execution-mode",
+        choices=CODEX_EXECUTION_MODES,
+        default="exec",
+        help=(
+            "Use one-shot codex exec, or open the interactive Codex TUI and "
+            "let the operator paste the generated task prompt"
+        ),
+    )
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
     parser.add_argument(
         "--icl",
@@ -303,6 +313,7 @@ def main() -> int:
         "codex_binary": args.codex_bin,
         "codex_model_requested": args.codex_model,
         "codex_effort_requested": args.codex_effort,
+        "codex_execution_mode": args.codex_execution_mode,
         "max_native_osc_micro_steps_per_submission": (
             MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
             if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
@@ -363,7 +374,6 @@ def main() -> int:
             "operating_system" if system_temp_workspace else "evaluator"
         ),
         "episode_resumable": False,
-        "codex_execution_mode": "exec",
         "transport": "unix_socket",
         "agent_control_adapter": (
             "mcp_stdio" if args.control_transport == "mcp" else "liberoctl_cli"
@@ -497,17 +507,36 @@ def main() -> int:
             effort=args.codex_effort,
             workspace=workspace,
             control_transport=args.control_transport,
+            execution_mode=args.codex_execution_mode,
         )
 
         print(f"run_id: {run_id}", flush=True)
         print(f"workspace: {workspace}", flush=True)
         print(f"private_run: {run_directory}", flush=True)
-        print("starting Codex CLI...", flush=True)
+        print(
+            f"prompt_file: {run_directory / 'agent_prompt.txt'}",
+            flush=True,
+        )
+        if args.codex_execution_mode == "interactive":
+            print("\n----- BEGIN TASK PROMPT -----", flush=True)
+            print(prompt.rstrip(), flush=True)
+            print("----- END TASK PROMPT -----\n", flush=True)
+            print(
+                "Starting interactive Codex CLI. Paste the complete task "
+                "prompt above as the first message.",
+                flush=True,
+            )
+        else:
+            print("starting Codex CLI...", flush=True)
         codex_process = subprocess.Popen(
             codex_command,
             cwd=workspace,
             env=codex_environment,
-            stdin=subprocess.DEVNULL,
+            stdin=(
+                None
+                if args.codex_execution_mode == "interactive"
+                else subprocess.DEVNULL
+            ),
         )
 
         while codex_process.poll() is None:
@@ -756,18 +785,28 @@ def build_codex_command(
     effort: str | None = None,
     workspace: Path | None = None,
     control_transport: str = "cli",
+    execution_mode: str = "exec",
 ) -> list[str]:
-    """Build a persistent, one-shot Codex CLI invocation for one episode."""
+    """Build a persistent Codex CLI invocation for one episode."""
 
-    command = [
-        codex_bin,
-        "exec",
-        "--dangerously-bypass-approvals-and-sandbox",
-        "--dangerously-bypass-hook-trust",
-        "--skip-git-repo-check",
-        "--color",
-        "never",
-    ]
+    if execution_mode not in CODEX_EXECUTION_MODES:
+        raise ValueError(
+            f"unsupported Codex execution mode: {execution_mode!r}"
+        )
+
+    command = [codex_bin]
+    if execution_mode == "exec":
+        command.append("exec")
+    command.extend(
+        (
+            "--dangerously-bypass-approvals-and-sandbox",
+            "--dangerously-bypass-hook-trust",
+        )
+    )
+    if execution_mode == "exec":
+        command.extend(("--skip-git-repo-check", "--color", "never"))
+    else:
+        command.append("--no-alt-screen")
     if model:
         command.extend(("--model", model))
     if effort:
@@ -806,7 +845,8 @@ def build_codex_command(
         )
     elif control_transport != "cli":
         raise ValueError(f"unsupported control transport: {control_transport!r}")
-    command.append(prompt)
+    if execution_mode == "exec":
+        command.append(prompt)
     return command
 
 
