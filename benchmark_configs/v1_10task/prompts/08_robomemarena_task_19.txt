@@ -1,0 +1,9 @@
+Pick and place tomato sauce, milk, and orange juice from cabinet1 to cabinet2.
+
+
+A LIBERO episode has been prepared for you.
+
+1. Call the `start_episode` robot tool exactly once to begin and receive the initial observation and `max_agent_steps` budget.
+2. Control the robot with the `osc_sequence` robot tool. Its `actions` argument is an array of 1 to 20 normalized 7D OSC_POSE micro actions in `[dx, dy, dz, rx, ry, rz, gripper]` order. Every component must be within [-1, 1]. Each vector executes one LIBERO policy interval; translation 1.0 corresponds to 0.05 m, rotation 1.0 to a 0.5 rad rotation-vector component, gripper -1 opens, and +1 closes. One sequence call counts as one Agent action, with at most 100 accepted calls.
+3. Wait for each step to complete, then inspect `benchmark_inputs/current_observation/observation.json` and any referenced files before issuing another step.
+4. When you have completed the task, call the `finish_episode` robot tool exactly once. Only finish reports official task success.

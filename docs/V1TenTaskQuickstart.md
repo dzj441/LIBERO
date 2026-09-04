@@ -1,8 +1,9 @@
 # V1 十任务最简测试指南
 
-这份指南用于在同一冻结配置下人工启动 V1 的十个任务，并把每次
-Codex 会话、机器人动作、checker 结果和连续仿真视频保存到
-`agent_runs/`。
+这份指南用于在同一冻结配置下启动 V1 的十个任务。仿真与 Agent
+分开启动：LIBERO 提供相同的 MCP、observation 和 checker，不限定使用
+Codex、Claude Code 或其他支持 STDIO MCP 的 Agent。机器人动作、checker
+结果和连续仿真视频统一保存在 `agent_runs/`。
 
 ## 统一配置
 
@@ -17,77 +18,33 @@ Codex 会话、机器人动作、checker 结果和连续仿真视频保存到
   `--keep-workspace`。episode 结束后由操作系统负责清理。
 - 仿真：EGL；launcher 自动选择与当前 NVIDIA 驱动匹配的
   `runtime/nvidia/` userspace libraries。
-- 每个 episode 不可 resume；Codex 退出时，相应 LIBERO server
-  也会退出。
+- 每个 episode 不可 resume；调用 `finish_episode` 后 LIBERO server
+  自动退出，未完成时可在仿真终端按 Ctrl-C 中止。
 
 ## 十个任务
 
-| 编号 | Suite | Task ID | Init state ID | Agent 收到的任务指令 |
-|---:|---|---:|---:|---|
-| 1 | libero_arrange_table | 0 | 0 | Arrange the table according to the provided goal image. |
-| 2 | libero_arrange_table | 1 | 0 | Arrange the table. For a clean table, the butter should be placed inside the basket, and each cup should be placed on a plate. |
-| 3 | robomemarena | 1 | 0 | Pick and place cookies into the basket, then pick and place tomato sauce into the same basket. |
-| 4 | robomemarena | 4 | 0 | Open and close all drawers in order to check. Put butter into the drawer that already contains an object. |
-| 5 | robomemarena | 7 | 0 | Pour tomato sauce over the frypan twice and place the sauce bottle into the bowl drainer. |
-| 6 | robomemarena | 12 | 0 | Put cookies into the middle drawer and then put chocolate into the same drawer. |
-| 7 | robomemarena | 14 | 0 | Put cookies into the top drawer and put chocolate into another drawer. |
-| 8 | robomemarena | 19 | 0 | Pick and place tomato sauce, milk, and orange juice from cabinet1 to cabinet2. |
-| 9 | robomemarena | 21 | 0 | Put butter into the microwave and then put chocolate into the location where the butter is placed. |
-| 10 | robomemarena | 26 | 0 | Pick and place chocolate and cream from plate1 to plate2, respectively. |
+| 编号 | Suite | Task ID | Init state ID | Agent 收到的任务指令 | 预置完整 prompt |
+|---:|---|---:|---:|---|---|
+| 1 | libero_arrange_table | 0 | 0 | Arrange the table according to the provided goal image. | `benchmark_configs/v1_10task/prompts/01_arrange_table_goal_image.txt` |
+| 2 | libero_arrange_table | 1 | 0 | Arrange the table. For a clean table, the butter should be placed inside the basket, and each cup should be placed on a plate. | `benchmark_configs/v1_10task/prompts/02_arrange_table_text.txt` |
+| 3 | robomemarena | 1 | 0 | Pick and place cookies into the basket, then pick and place tomato sauce into the same basket. | `benchmark_configs/v1_10task/prompts/03_robomemarena_task_01.txt` |
+| 4 | robomemarena | 4 | 0 | Open and close all drawers in order to check. Put butter into the drawer that already contains an object. | `benchmark_configs/v1_10task/prompts/04_robomemarena_task_04.txt` |
+| 5 | robomemarena | 7 | 0 | Pour tomato sauce over the frypan twice and place the sauce bottle into the bowl drainer. | `benchmark_configs/v1_10task/prompts/05_robomemarena_task_07.txt` |
+| 6 | robomemarena | 12 | 0 | Put cookies into the middle drawer and then put chocolate into the same drawer. | `benchmark_configs/v1_10task/prompts/06_robomemarena_task_12.txt` |
+| 7 | robomemarena | 14 | 0 | Put cookies into the top drawer and put chocolate into another drawer. | `benchmark_configs/v1_10task/prompts/07_robomemarena_task_14.txt` |
+| 8 | robomemarena | 19 | 0 | Pick and place tomato sauce, milk, and orange juice from cabinet1 to cabinet2. | `benchmark_configs/v1_10task/prompts/08_robomemarena_task_19.txt` |
+| 9 | robomemarena | 21 | 0 | Put butter into the microwave and then put chocolate into the location where the butter is placed. | `benchmark_configs/v1_10task/prompts/09_robomemarena_task_21.txt` |
+| 10 | robomemarena | 26 | 0 | Pick and place chocolate and cream from plate1 to plate2, respectively. | `benchmark_configs/v1_10task/prompts/10_robomemarena_task_26.txt` |
 
 V1 的 Task 4 使用 `init_state_id=0`，即隐藏物体初始位于 top drawer。
 `init_state_id=1/2` 分别是已经验证过的 middle/bottom 变体，但不计入
 本轮十任务结果。
 
-## 操作者使用的 Agent 与实际被测 Agent
-
-这里需要区分两个角色：
-
-1. 师兄可以使用 Claude Code、Kimi、DeepSeek 或其他 coding agent
-   阅读本仓库、检查实现并帮助执行下面的 shell 命令。这不会改变实验
-   中实际被测的 Agent。
-2. 当前 V1 launcher 实际启动并记录的是 Codex CLI harness。实验中的
-   被测模型由 `--codex-model` 指定；`--codex-effort` 指定该模型支持的
-   reasoning effort。
-
-因此，`--codex-model` 可以在当前 Codex CLI 已配置且有权限访问的模型
-之间切换，例如：
-
-```bash
-  --codex-model gpt-5.6-sol \
-  --codex-effort high
-```
-
-省略这两个参数时，使用仓库当前默认的 `gpt-5.6-luna`、`max`。
-每个实验都应显式记录这两个参数，以免把不同模型或 effort 的结果混在
-一起。
-
-Claude Code、DeepSeek 或 Kimi 本身不能通过把 `--codex-bin` 改成
-`claude`、`deepseek` 或 `kimi` 来成为被测 Agent。不同 harness 的命令
-行参数、MCP 注册和 session 日志格式不同；这样替换会直接破坏 launcher
-契约。若要正式评测这些 Agent，需要为相应 harness 增加一个 adapter，
-使它连接同一个 workspace-local MCP，并保持相同的 observation、100 次
-动作预算、临时盘隔离和 `start_episode` → `osc_sequence` →
-`finish_episode` 生命周期。当前 V1 尚未宣称支持该替换。
-
-可以把下面这段话交给任意 coding agent，帮助操作者熟悉并启动当前
-Codex V1，而不改变 benchmark：
-
-```text
-请阅读 docs/V1TenTaskQuickstart.md，并检查
-scripts/launch_agent_episode.py、libero/libero/agent_env/ 和
-libero/libero/agent_env/robomemarena_vendor/。请先解释 V1 的十个任务、
-Level 4 observation、MCP 三工具接口、100 次动作预算、临时 workspace
-隔离和 checker 权威性，再帮助我严格按照文档启动指定任务。不要修改
-任务、checker、prompt、预算或 observation contract；如果发现设计问题，
-请单独列出，不要在测试前自行修复。
-```
-
-## 从仓库根目录启动
+## 第一步：启动仿真
 
 以下命令应在 `LIBERO/` 根目录运行。把 `SUITE` 和 `TASK_ID` 换成
 上表中的值；本轮固定 `SEED=100`。如果并行测试，可把不同 episode
-分配到 GPU 0–3。
+分配到 GPU 0–3。这个终端在整个 episode 中需要保持运行。
 
 ```bash
 SUITE=libero_arrange_table
@@ -107,54 +64,104 @@ PYTHONPATH=. ../miniconda3/envs/libero/bin/python \
   --action-interface native_osc_sequence \
   --control-transport mcp \
   --icl none \
-  --codex-execution-mode interactive
+  --external-agent
 ```
 
-## 打开 CLI 后从哪里复制 instruction
-
-使用 `--codex-execution-mode interactive` 时，launcher 会先创建临时
-Agent workspace、启动 LIBERO server、验证 Unix socket，然后在当前
-终端打开交互式 Codex CLI。它不会自动替你发送任务。
-
-打开 CLI 前，终端会打印：
+仿真 ready 后会打印四个路径：
 
 ```text
 run_id: <run_id>
 workspace: /tmp/libero-agent-workspace-<random>
 private_run: .../LIBERO/agent_runs/<run_id>
 prompt_file: .../LIBERO/agent_runs/<run_id>/agent_prompt.txt
-
------ BEGIN TASK PROMPT -----
-<完整 instruction 与机器人接口说明>
------ END TASK PROMPT -----
+mcp_config_file: .../LIBERO/agent_runs/<run_id>/agent_mcp_config.json
 ```
 
-把 `BEGIN/END` 之间的完整文本作为 Codex CLI 的第一条消息粘贴进去。
-也可以在另一个终端执行：
+其中：
+
+- `workspace` 是 Agent 必须进入的临时工作目录；本次公开的
+  `current_observation/` 会原子更新在这里。
+- `agent_mcp_config.json` 是本 episode 的标准 STDIO MCP 配置，只注册
+  `start_episode`、`osc_sequence` 和 `finish_episode`。
+- `agent_prompt.txt` 是本次实际使用的完整 prompt，与上表对应的仓库
+  预置 TXT 一致。运行目录中的副本用于审计。
+
+## 第二步：让所选 Agent 给出自己的接入方法
+
+Claude Code、Codex、Kimi、DeepSeek 等 Agent 的 MCP 注册参数和
+非交互命令可能不同，因此本文不维护某一个 Agent 的专用命令。正式测试
+前，在仓库根目录另开一个仅用于接入准备的 setup session，把下面这段
+话交给准备使用的 Agent：
+
+```text
+请作为 LIBERO benchmark 的接入助手，阅读
+docs/V1TenTaskQuickstart.md、scripts/launch_agent_episode.py 和
+scripts/libero_mcp_server.py；如有必要，可继续查看与 Agent 接入直接相关的
+代码。请结合你当前 Agent/CLI 的实际名称、版本和本机 help，告诉操作者：
+
+1. 如何在指定 WORKSPACE 中启动一个全新 session；
+2. 如何为该 session 加载 MCP_CONFIG 指向的 STDIO MCP；
+3. 如何像 codex exec 一样，把 PROMPT_FILE 作为首条消息非交互执行；
+4. 如何进入交互 CLI，再由操作者粘贴 PROMPT_FILE；
+5. 如何保存该 Agent 自己的 session 日志用于审计。
+
+launcher 会提供 WORKSPACE、MCP_CONFIG 和 PROMPT_FILE 的绝对路径。
+MCP_CONFIG 使用顶层 mcpServers 格式，其中 libero 条目已经包含 command、
+args 和 env。如果你的客户端格式不同，只映射这三个字段，不修改 MCP
+server、任务 prompt、动作预算、observation 或 checker。
+
+请只返回经过当前 CLI help 核验的具体命令、必要适配和注意事项；不要启动
+仿真或 rollout，不要修改代码，也不要查看任务 BDDL、checker、私有
+observation 或已有实验结果。
+```
+
+这一步可以由师兄惯用的任何 coding agent 完成。它的职责是研究“自己
+如何挂载这个 MCP”，不是参加具身评测。
+
+为了避免 codebase、checker 或历史结果进入被测上下文，setup session
+不能直接续作正式 rollout。拿到接入命令后应关闭它，再从 launcher 打印的
+临时 `workspace` 启动一个全新的被测 session。
+
+## 第三步：启动正式 Agent
+
+在第二个终端记录仿真 launcher 打印的三个路径：
 
 ```bash
-cat /绝对路径/LIBERO/agent_runs/<run_id>/agent_prompt.txt
+WORKSPACE=/tmp/libero-agent-workspace-<random>
+MCP_CONFIG=/绝对路径/LIBERO/agent_runs/<run_id>/agent_mcp_config.json
+PROMPT_FILE=/绝对路径/LIBERO/agent_runs/<run_id>/agent_prompt.txt
 ```
 
-复制该文件的全部内容。应当使用 launcher 打开的 Codex CLI，不要在
-另一个普通 shell 中独立执行裸 `codex`：只有 launcher 启动的进程带有
-本 episode 的临时 cwd、Unix socket 环境变量和 workspace-local MCP
-注册。
+然后严格使用 setup Agent 给出的本机命令：
 
-Agent 完成任务并调用 `finish_episode` 后，等待其最终回复，然后使用
-`/exit` 退出 CLI。launcher 随后收尾 server、视频和 session。若在调用
-`finish_episode` 前退出 CLI，该 run 会被正确记录为 `aborted`。
+1. 从 `WORKSPACE` 启动全新 Agent session；
+2. 只为该 session 加载 `MCP_CONFIG`；
+3. 二选一：以非交互模式直接发送 `PROMPT_FILE`，或打开交互 CLI 后粘贴
+   该文件的完整内容；
+4. 不向正式 session 提供 LIBERO 仓库、checker 或历史 run 作为上下文。
 
-## 非交互自动运行
+若所选 Agent 原生支持 STDIO MCP，通常只需改变其 MCP 加载参数和启动
+命令，不需要修改本仓库代码。若它不支持此格式，再根据 setup Agent 的
+结论增加独立的薄 adapter。
 
-自动正式实验只需把上面的参数改为：
+## 第四步：完成与收尾
+
+Agent 必须按 prompt 使用 `start_episode` → `osc_sequence` →
+`finish_episode`。`finish_episode` 返回官方 checker 结果后，仿真终端会
+自动退出并写完视频。若 Agent 在 finish 前退出，在仿真终端按 Ctrl-C；
+该 run 会记录为 `aborted`，不能 resume 当前物理 episode。
+
+## 可选：仍由 launcher 直接启动 Codex
+
+已有 Codex 一键模式继续保留。去掉 `--external-agent`，并选择：
 
 ```bash
-  --codex-execution-mode exec
+--codex-execution-mode exec         # 自动执行
+--codex-execution-mode interactive  # 打开 CLI 后手工粘贴 prompt
 ```
 
-这是默认模式。launcher 会把同一个 `agent_prompt.txt` 直接作为
-`codex exec` 的首条消息，其他任务、接口、预算和隔离语义完全相同。
+这两种模式由 launcher 自动注入 Codex MCP。使用 Claude Code、Kimi、
+DeepSeek 等其他 Agent 时，使用上面的 external workflow。
 
 ## 结果与回看
 
@@ -163,17 +170,18 @@ Agent 完成任务并调用 `finish_episode` 后，等待其最终回复，然�
 ```text
 agent_runs/<run_id>/
   agent_prompt.txt
+  agent_mcp_config.json
   run_manifest.json
   actions.jsonl
   result.json
   continuous_video.mp4
-  codex_session.jsonl
+  codex_session.jsonl       # 仅 launcher 直接启动 Codex 时存在
   private_observations/
 ```
 
 `result.json` 是最终 checker 结果；`continuous_video.mp4` 是连续仿真
-录像；`codex_session.jsonl` 和 `actions.jsonl` 用于审计 Agent 的观察、
-分析和机器人调用。
+录像；`actions.jsonl` 记录机器人调用。`codex_session.jsonl` 只由内置
+Codex harness 自动归档；外部 Agent 的会话日志由相应 Agent 自己保存。
 
 启动只读 Viewer：
 
@@ -185,5 +193,5 @@ PYTHONPATH=. ../miniconda3/envs/libero/bin/python \
   --runs-root agent_runs
 ```
 
-打开命令打印的浏览器地址，即可按 run 查看 Agent timeline、历史观测、
-动作和连续视频。
+打开命令打印的浏览器地址，即可按 run 查看历史观测、动作和连续视频；
+只有归档了受支持 session JSONL 的 run 才会额外显示完整 Agent timeline。

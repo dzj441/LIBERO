@@ -103,6 +103,15 @@ def parse_args() -> argparse.Namespace:
             "let the operator paste the generated task prompt"
         ),
     )
+    parser.add_argument(
+        "--external-agent",
+        action="store_true",
+        help=(
+            "Start and supervise only the LIBERO episode service. Print the "
+            "workspace, prompt, and standard MCP config paths so a separately "
+            "launched Agent can connect."
+        ),
+    )
     parser.add_argument("--https-proxy", default="http://127.0.0.1:7890")
     parser.add_argument(
         "--icl",
@@ -144,6 +153,10 @@ def main() -> int:
     ):
         raise ValueError(
             "the MCP adapter currently exposes only native_osc_sequence"
+        )
+    if args.external_agent and args.control_transport != "mcp":
+        raise ValueError(
+            "--external-agent currently requires --control-transport mcp"
         )
     if args.icl == "fixed_demo" and args.fixed_demo_master is None:
         raise ValueError("--icl fixed_demo requires --fixed-demo-master")
@@ -225,6 +238,12 @@ def main() -> int:
         workspace / ".libero" / "episode.json",
         run_directory / "agent_workspace_contract.json",
     )
+    mcp_config_path: Path | None = None
+    if args.control_transport == "mcp":
+        mcp_config = build_external_mcp_config(workspace)
+        mcp_config_path = run_directory / "agent_mcp_config.json"
+        _write_json_atomic(workspace / ".libero" / "mcp.json", mcp_config)
+        _write_json_atomic(mcp_config_path, mcp_config)
     icl_projection_receipt = None
     experience_context_projection_receipt = None
     if args.icl == "fixed_demo":
@@ -310,10 +329,13 @@ def main() -> int:
             else "libero_official"
         ),
         "task_source_fingerprint": task_source_fingerprint,
-        "codex_binary": args.codex_bin,
-        "codex_model_requested": args.codex_model,
-        "codex_effort_requested": args.codex_effort,
-        "codex_execution_mode": args.codex_execution_mode,
+        "agent_harness": "external" if args.external_agent else "codex",
+        "codex_binary": None if args.external_agent else args.codex_bin,
+        "codex_model_requested": None if args.external_agent else args.codex_model,
+        "codex_effort_requested": None if args.external_agent else args.codex_effort,
+        "codex_execution_mode": (
+            None if args.external_agent else args.codex_execution_mode
+        ),
         "max_native_osc_micro_steps_per_submission": (
             MAX_NATIVE_OSC_MICRO_STEPS_PER_SUBMISSION
             if action_interface is ActionInterface.NATIVE_OSC_SEQUENCE
@@ -459,7 +481,7 @@ def main() -> int:
         )
     server_log_path = run_directory / "server.log"
     codex_started_at = time.time()
-    known_sessions = _session_files()
+    known_sessions = set() if args.external_agent else _session_files()
     server_log = server_log_path.open("w", encoding="utf-8")
     server_process: subprocess.Popen[Any] | None = None
     codex_process: subprocess.Popen[Any] | None = None
@@ -492,24 +514,6 @@ def main() -> int:
         )
         _write_json_atomic(run_directory / "run_manifest.json", manifest)
 
-        codex_environment = os.environ.copy()
-        codex_environment["PATH"] = os.pathsep.join(
-            (os.fspath(workspace / "bin"), codex_environment.get("PATH", ""))
-        )
-        codex_environment["LIBERO_CONTROL_SOCKET"] = ".libero/control.sock"
-        codex_environment["LIBERO_AGENT_WORKSPACE"] = os.fspath(workspace)
-        codex_environment["LIBERO_ACTION_INTERFACE"] = action_interface.value
-        codex_environment["HTTPS_PROXY"] = args.https_proxy
-        codex_command = build_codex_command(
-            codex_bin=args.codex_bin,
-            prompt=prompt,
-            model=args.codex_model,
-            effort=args.codex_effort,
-            workspace=workspace,
-            control_transport=args.control_transport,
-            execution_mode=args.codex_execution_mode,
-        )
-
         print(f"run_id: {run_id}", flush=True)
         print(f"workspace: {workspace}", flush=True)
         print(f"private_run: {run_directory}", flush=True)
@@ -517,52 +521,82 @@ def main() -> int:
             f"prompt_file: {run_directory / 'agent_prompt.txt'}",
             flush=True,
         )
-        if args.codex_execution_mode == "interactive":
-            print("\n----- BEGIN TASK PROMPT -----", flush=True)
-            print(prompt.rstrip(), flush=True)
-            print("----- END TASK PROMPT -----\n", flush=True)
+        if mcp_config_path is not None:
+            print(f"mcp_config_file: {mcp_config_path}", flush=True)
+        if args.external_agent:
             print(
-                "Starting interactive Codex CLI. Paste the complete task "
-                "prompt above as the first message.",
+                "LIBERO server ready. Keep this launcher running, start the "
+                "selected Agent from the workspace above, and load the MCP "
+                "config above. The launcher exits after finish_episode; press "
+                "Ctrl-C here to abort an unfinished episode.",
                 flush=True,
             )
+            server_return_code = server_process.wait()
         else:
-            print("starting Codex CLI...", flush=True)
-        codex_process = subprocess.Popen(
-            codex_command,
-            cwd=workspace,
-            env=codex_environment,
-            stdin=(
-                None
-                if args.codex_execution_mode == "interactive"
-                else subprocess.DEVNULL
-            ),
-        )
+            codex_environment = os.environ.copy()
+            codex_environment["PATH"] = os.pathsep.join(
+                (os.fspath(workspace / "bin"), codex_environment.get("PATH", ""))
+            )
+            codex_environment["LIBERO_CONTROL_SOCKET"] = ".libero/control.sock"
+            codex_environment["LIBERO_AGENT_WORKSPACE"] = os.fspath(workspace)
+            codex_environment["LIBERO_ACTION_INTERFACE"] = action_interface.value
+            codex_environment["HTTPS_PROXY"] = args.https_proxy
+            codex_command = build_codex_command(
+                codex_bin=args.codex_bin,
+                prompt=prompt,
+                model=args.codex_model,
+                effort=args.codex_effort,
+                workspace=workspace,
+                control_transport=args.control_transport,
+                execution_mode=args.codex_execution_mode,
+            )
 
-        while codex_process.poll() is None:
-            server_return_code = server_process.poll()
-            if server_return_code is not None:
-                result = _read_json(run_directory / "result.json")
-                if result.get("status") != "finished":
-                    infrastructure_error = (
-                        "LIBERO server exited before finish "
-                        f"with code {server_return_code}"
-                    )
-                    _terminate_process(codex_process)
-                    break
-            time.sleep(0.25)
-
-        codex_return_code = codex_process.wait()
-        if server_process.poll() is None:
-            result = _read_json(run_directory / "result.json")
-            if result.get("status") == "finished":
-                try:
-                    server_process.wait(timeout=10.0)
-                except subprocess.TimeoutExpired:
-                    _terminate_process_group(server_process)
+            if args.codex_execution_mode == "interactive":
+                print("\n----- BEGIN TASK PROMPT -----", flush=True)
+                print(prompt.rstrip(), flush=True)
+                print("----- END TASK PROMPT -----\n", flush=True)
+                print(
+                    "Starting interactive Codex CLI. Paste the complete task "
+                    "prompt above as the first message.",
+                    flush=True,
+                )
             else:
-                _terminate_process_group(server_process)
-        server_return_code = server_process.wait()
+                print("starting Codex CLI...", flush=True)
+            codex_process = subprocess.Popen(
+                codex_command,
+                cwd=workspace,
+                env=codex_environment,
+                stdin=(
+                    None
+                    if args.codex_execution_mode == "interactive"
+                    else subprocess.DEVNULL
+                ),
+            )
+
+            while codex_process.poll() is None:
+                server_return_code = server_process.poll()
+                if server_return_code is not None:
+                    result = _read_json(run_directory / "result.json")
+                    if result.get("status") != "finished":
+                        infrastructure_error = (
+                            "LIBERO server exited before finish "
+                            f"with code {server_return_code}"
+                        )
+                        _terminate_process(codex_process)
+                        break
+                time.sleep(0.25)
+
+            codex_return_code = codex_process.wait()
+            if server_process.poll() is None:
+                result = _read_json(run_directory / "result.json")
+                if result.get("status") == "finished":
+                    try:
+                        server_process.wait(timeout=10.0)
+                    except subprocess.TimeoutExpired:
+                        _terminate_process_group(server_process)
+                else:
+                    _terminate_process_group(server_process)
+            server_return_code = server_process.wait()
     except BaseException as exc:
         infrastructure_error = f"{type(exc).__name__}: {exc}"
         caught_exception = exc
@@ -578,25 +612,28 @@ def main() -> int:
         )
     finally:
         server_log.close()
-        try:
-            archived_session = _copy_codex_session(
-                workspace=workspace,
-                run_directory=run_directory,
-                known_sessions=known_sessions,
-                started_at=codex_started_at,
-            )
-            if archived_session is not None:
-                _archive_viewed_artifacts(
-                    session_path=archived_session,
+        if not args.external_agent:
+            try:
+                archived_session = _copy_codex_session(
                     workspace=workspace,
                     run_directory=run_directory,
+                    known_sessions=known_sessions,
+                    started_at=codex_started_at,
                 )
-        except BaseException as exc:
-            session_archive_error = f"{type(exc).__name__}: {exc}"
-            if infrastructure_error is None:
-                infrastructure_error = f"session archival failed: {session_archive_error}"
-            if caught_exception is None:
-                caught_exception = exc
+                if archived_session is not None:
+                    _archive_viewed_artifacts(
+                        session_path=archived_session,
+                        workspace=workspace,
+                        run_directory=run_directory,
+                    )
+            except BaseException as exc:
+                session_archive_error = f"{type(exc).__name__}: {exc}"
+                if infrastructure_error is None:
+                    infrastructure_error = (
+                        f"session archival failed: {session_archive_error}"
+                    )
+                if caught_exception is None:
+                    caught_exception = exc
     result_path = run_directory / "result.json"
     result = _read_json(result_path)
     codex_session_infrastructure_error = None
@@ -623,11 +660,16 @@ def main() -> int:
     if codex_session_infrastructure_error is not None:
         result["status"] = "infrastructure_error"
         result["reason"] = codex_session_infrastructure_error
-    elif result.get("status") == "aborted" and codex_return_code is not None:
+    elif (
+        not args.external_agent
+        and result.get("status") == "aborted"
+        and codex_return_code is not None
+    ):
         result["reason"] = "codex_process_exited_before_finish"
     result.update(
         {
             "codex_exit_code": codex_return_code,
+            "agent_harness": "external" if args.external_agent else "codex",
             "server_exit_code": server_return_code,
             "launcher_finished_at": _utc_now(),
             "infrastructure_error": infrastructure_error,
@@ -651,6 +693,8 @@ def main() -> int:
         return 2
     if infrastructure_error is not None or result.get("status") != "finished":
         return 2
+    if args.external_agent:
+        return 0 if server_return_code == 0 else 2
     return 0 if codex_return_code == 0 else 2
 
 
@@ -848,6 +892,26 @@ def build_codex_command(
     if execution_mode == "exec":
         command.append(prompt)
     return command
+
+
+def build_external_mcp_config(workspace: Path) -> dict[str, Any]:
+    """Return a client-neutral STDIO MCP config for one prepared episode."""
+
+    root = workspace.expanduser().resolve()
+    return {
+        "mcpServers": {
+            MCP_SERVER_NAME: {
+                "command": os.fspath(root / "bin" / "libero_mcp_server"),
+                "args": [],
+                "env": {
+                    "LIBERO_AGENT_WORKSPACE": os.fspath(root),
+                    "LIBERO_CONTROL_SOCKET": os.fspath(
+                        root / ".libero" / "control.sock"
+                    ),
+                },
+            }
+        }
+    }
 
 
 def _task_instruction(suite: str, task_id: int) -> str:

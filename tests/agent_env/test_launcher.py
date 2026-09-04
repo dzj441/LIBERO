@@ -9,6 +9,7 @@ from scripts.launch_agent_episode import (
     _archive_viewed_artifacts,
     _codex_infrastructure_error_from_session,
     _prepare_workspace,
+    build_external_mcp_config,
     build_codex_command,
     build_task_prompt,
     parse_args,
@@ -97,6 +98,18 @@ def test_launcher_defaults_to_mcp_native_osc(monkeypatch):
     assert args.control_transport == "mcp"
     assert args.action_interface == ActionInterface.NATIVE_OSC_SEQUENCE.value
     assert args.codex_execution_mode == "exec"
+    assert args.external_agent is False
+
+
+def test_launcher_accepts_external_agent_mode(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["launch_agent_episode.py", "--external-agent"],
+    )
+    args = parse_args()
+    assert args.external_agent is True
+    assert args.control_transport == "mcp"
 
 
 def test_all_agent_entrypoints_default_to_luna_max(monkeypatch, tmp_path):
@@ -428,6 +441,32 @@ def test_mcp_prompt_names_only_the_three_robot_tools():
     assert "1 to 20 normalized 7D OSC_POSE micro actions" in prompt
 
 
+def test_v1_static_prompts_match_the_runtime_prompt_builder():
+    repository = Path(__file__).resolve().parents[2]
+    cases = (
+        ("01_arrange_table_goal_image.txt", "libero_arrange_table", 0),
+        ("02_arrange_table_text.txt", "libero_arrange_table", 1),
+        ("03_robomemarena_task_01.txt", "robomemarena", 1),
+        ("04_robomemarena_task_04.txt", "robomemarena", 4),
+        ("05_robomemarena_task_07.txt", "robomemarena", 7),
+        ("06_robomemarena_task_12.txt", "robomemarena", 12),
+        ("07_robomemarena_task_14.txt", "robomemarena", 14),
+        ("08_robomemarena_task_19.txt", "robomemarena", 19),
+        ("09_robomemarena_task_21.txt", "robomemarena", 21),
+        ("10_robomemarena_task_26.txt", "robomemarena", 26),
+    )
+    prompt_root = repository / "benchmark_configs/v1_10task/prompts"
+
+    for filename, suite, task_id in cases:
+        expected = build_task_prompt(
+            _task_instruction(suite, task_id),
+            action_interface=ActionInterface.NATIVE_OSC_SEQUENCE,
+            control_transport="mcp",
+            max_agent_steps=100,
+        )
+        assert (prompt_root / filename).read_text(encoding="utf-8") == expected
+
+
 def test_native_workspace_exposes_only_the_selected_wire_operation(tmp_path):
     source_root = Path(__file__).resolve().parents[2]
     workspace = tmp_path / "workspace"
@@ -578,6 +617,27 @@ def test_codex_command_injects_required_workspace_local_mcp(tmp_path):
     assert "mcp_servers.libero.required=true" in rendered
     assert 'mcp_servers.libero.default_tools_approval_mode="auto"' in rendered
     assert '"start_episode", "osc_sequence", "finish_episode"' in rendered
+
+
+def test_external_mcp_config_uses_only_workspace_local_public_adapter(tmp_path):
+    workspace = tmp_path / "workspace"
+    config = build_external_mcp_config(workspace)
+
+    server = config["mcpServers"]["libero"]
+    assert server == {
+        "command": str(workspace / "bin/libero_mcp_server"),
+        "args": [],
+        "env": {
+            "LIBERO_AGENT_WORKSPACE": str(workspace),
+            "LIBERO_CONTROL_SOCKET": str(
+                workspace / ".libero/control.sock"
+            ),
+        },
+    }
+    rendered = json.dumps(config)
+    assert "seed" not in rendered
+    assert "checker" not in rendered
+    assert "private_observations" not in rendered
 
 
 def test_system_temp_workspace_is_random_and_left_for_system_cleanup(tmp_path):
