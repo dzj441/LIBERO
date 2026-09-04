@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import hashlib
 import os
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Callable, Mapping
 
@@ -27,7 +28,7 @@ from .robomemarena_vendor.stage import reference_stage
 
 
 ROBOMEMARENA_SUITE = "robomemarena"
-ROBOMEMARENA_SOURCE_SCHEMA_VERSION = "libero.robomemarena_source.v2"
+ROBOMEMARENA_SOURCE_SCHEMA_VERSION = "libero.robomemarena_source.v3"
 ROBOMEMARENA_VENDOR_ROOT = (
     Path(__file__).resolve().parent / "robomemarena_vendor"
 )
@@ -63,7 +64,7 @@ TASK_INSTRUCTIONS = {
     18: "Pick and place chocolate and butter from cabinet1 to cabinet2, respectively.",
     19: "Pick and place tomato sauce, milk, and orange juice from cabinet1 to cabinet2.",
     20: "Put cookies into the microwave and then put chocolate into the location where the cookies were placed.",
-    21: "Put butter into the microwave and then put chocolate into the location where the butter was placed.",
+    21: "Put butter into the microwave and then put chocolate into the location where the butter is placed.",
     22: "Pour tomato sauce over cookies twice, then put the cookies into the microwave.",
     23: "Put cream into the microwave and then put popcorn into the location where the cream was placed.",
     24: "Put cookies into the microwave and then put popcorn into the location where the cookies were placed.",
@@ -98,6 +99,16 @@ TASK_BDDL_FILENAMES = {
     24: "24_cookies_popcorn_microwave.bddl",
     25: "25_butter_cream.bddl",
     26: "26_chocolate_pudding_cream.bddl",
+}
+
+TASK4_OCCUPIED_DRAWER_BY_INIT_STATE_ID = {
+    0: "top",
+    1: "middle",
+    2: "bottom",
+}
+TASK4_INIT_STATE_ID_BY_OCCUPIED_DRAWER = {
+    drawer: init_state_id
+    for init_state_id, drawer in TASK4_OCCUPIED_DRAWER_BY_INIT_STATE_ID.items()
 }
 
 
@@ -139,18 +150,22 @@ def robomemarena_source_fingerprint(
     checkout_root: str | os.PathLike[str] | None = None,
     *,
     task_id: int,
+    init_state_id: int = 0,
 ) -> dict[str, Any]:
     """Validate and fingerprint the evaluator-private frozen task source."""
 
     spec = get_robomemarena_task_spec(task_id)
+    task_variant = robomemarena_task_variant(
+        task_id=task_id, init_state_id=init_state_id
+    )
+    bddl_path = robomemarena_bddl_path(
+        checkout_root,
+        task_id=task_id,
+        init_state_id=init_state_id,
+    )
     if checkout_root is None:
         source_kind = "vendored_compatibility_subset"
         source_commit = UPSTREAM_COMMIT
-        bddl_path = (
-            ROBOMEMARENA_VENDOR_ROOT
-            / "bddl"
-            / Path(spec.bddl_relative_path).name
-        )
         cabinet_path = (
             ROBOMEMARENA_VENDOR_ROOT
             / "core/assets/articulated_objects/"
@@ -160,7 +175,6 @@ def robomemarena_source_fingerprint(
     else:
         source_kind = "external_clean_checkout"
         root = Path(checkout_root).expanduser().resolve()
-        bddl_path = root / spec.bddl_relative_path
         cabinet_path = (
             root
             / "evaluation_benchmark/libero_fork/libero/assets/"
@@ -201,6 +215,14 @@ def robomemarena_source_fingerprint(
     return {
         "schema_version": ROBOMEMARENA_SOURCE_SCHEMA_VERSION,
         "task_id": spec.task_id,
+        "init_state_id": int(init_state_id),
+        "task_variant": task_variant,
+        "bddl_filename": bddl_path.name,
+        "bddl_source_kind": (
+            "vendored_initial_state_variant"
+            if task_id == 4 and task_variant != "top"
+            else source_kind
+        ),
         "source_kind": source_kind,
         "source_commit": source_commit,
         **{
@@ -214,15 +236,63 @@ def robomemarena_bddl_path(
     checkout_root: str | os.PathLike[str] | None,
     *,
     task_id: int,
+    init_state_id: int = 0,
 ) -> Path:
     spec = get_robomemarena_task_spec(task_id)
+    task_variant = robomemarena_task_variant(
+        task_id=task_id, init_state_id=init_state_id
+    )
+    filename = Path(spec.bddl_relative_path).name
+    if task_id == 4 and task_variant != "top":
+        filename = f"4_drawer_butter_{task_variant}.bddl"
+        # These two variants repair an upstream packaging omission. They are
+        # frozen in this adapter even when an external checkout supplies the
+        # simulator implementation and assets.
+        return ROBOMEMARENA_VENDOR_ROOT / "bddl" / filename
     if checkout_root is None:
-        return (
-            ROBOMEMARENA_VENDOR_ROOT
-            / "bddl"
-            / Path(spec.bddl_relative_path).name
-        )
+        return ROBOMEMARENA_VENDOR_ROOT / "bddl" / filename
     return Path(checkout_root).expanduser().resolve() / spec.bddl_relative_path
+
+
+def robomemarena_task_variant(*, task_id: int, init_state_id: int) -> str:
+    """Resolve evaluator-private initial-state variants.
+
+    RoboMemArena Task 4 trajectories use all three occupied drawers, while
+    upstream publishes only the top-drawer BDDL. The adapter therefore uses
+    init-state IDs 0/1/2 for top/middle/bottom. Other tasks currently expose
+    their single frozen BDDL as init-state ID 0.
+    """
+
+    task_id = int(task_id)
+    init_state_id = int(init_state_id)
+    if task_id == 4:
+        try:
+            return TASK4_OCCUPIED_DRAWER_BY_INIT_STATE_ID[init_state_id]
+        except KeyError as exc:
+            raise ValueError(
+                "RoboMemArena Task 4 init_state_id must be 0 (top), "
+                "1 (middle), or 2 (bottom)"
+            ) from exc
+    if init_state_id != 0:
+        raise ValueError(
+            f"RoboMemArena Task {task_id} supports init_state_id 0 only"
+        )
+    return "default"
+
+
+def task4_init_state_id_from_recorded_instruction(instruction: str) -> int:
+    """Recover Task 4's omitted occupied-drawer variant from HDF5 metadata."""
+
+    match = re.search(
+        r"open the (top|middle|bottom) drawer again",
+        " ".join(str(instruction).lower().split()),
+    )
+    if match is None:
+        raise ValueError(
+            "Task 4 trajectory instruction does not identify the occupied "
+            "drawer"
+        )
+    return TASK4_INIT_STATE_ID_BY_OCCUPIED_DRAWER[match.group(1)]
 
 
 class RoboMemArenaTask4Evaluator:
@@ -241,7 +311,24 @@ class RoboMemArenaTask4Evaluator:
         self._events: list[dict[str, Any]] = []
         self._control_step = 0
         self._active = False
-        self._checks: tuple[tuple[str, Callable[[], bool]], ...] = (
+        self._target_drawer: str | None = None
+        self._checks: tuple[tuple[str, Callable[[], bool]], ...] = ()
+
+    def reset(self) -> None:
+        self._initial_sites = {
+            drawer: self._site_position(
+                f"wooden_cabinet_1_{drawer}_region"
+            )
+            for drawer in ("top", "middle", "bottom")
+        }
+        hidden_object = self._body_position("cream_cheese_1")
+        self._target_drawer = min(
+            self._initial_sites,
+            key=lambda drawer: float(
+                np.linalg.norm(hidden_object - self._initial_sites[drawer])
+            ),
+        )
+        self._checks = (
             (self.spec.required_stage_names[0], lambda: self._drawer_open("top")),
             (self.spec.required_stage_names[1], lambda: self._drawer_closed("top")),
             (
@@ -260,18 +347,16 @@ class RoboMemArenaTask4Evaluator:
                 self.spec.required_stage_names[5],
                 lambda: self._drawer_closed("bottom"),
             ),
-            (self.spec.required_stage_names[6], lambda: self._drawer_open("top")),
-            (self.spec.required_stage_names[7], self._butter_in_top_drawer),
-            (self.spec.optional_stage_names[0], lambda: self._drawer_closed("top")),
+            (
+                self.spec.required_stage_names[6],
+                lambda: self._drawer_open(self._required_target_drawer()),
+            ),
+            (self.spec.required_stage_names[7], self._butter_in_target_drawer),
+            (
+                self.spec.optional_stage_names[0],
+                lambda: self._drawer_closed(self._required_target_drawer()),
+            ),
         )
-
-    def reset(self) -> None:
-        self._initial_sites = {
-            drawer: self._site_position(
-                f"wooden_cabinet_1_{drawer}_region"
-            )
-            for drawer in ("top", "middle", "bottom")
-        }
         self._completed = []
         self._events = []
         self._control_step = 0
@@ -299,7 +384,8 @@ class RoboMemArenaTask4Evaluator:
     def result(self) -> dict[str, Any]:
         required = self.spec.required_stage_names
         required_completed = sum(name in self._completed for name in required)
-        success = required_completed == len(required)
+        terminal_success = self._butter_in_target_drawer()
+        success = required_completed == len(required) and terminal_success
         return {
             "schema_version": "libero.robomemarena_private_evaluation.v1",
             "task_id": self.spec.task_id,
@@ -315,6 +401,10 @@ class RoboMemArenaTask4Evaluator:
             ],
             "completed_stage_names": list(self._completed),
             "optional_stage_names": list(self.spec.optional_stage_names),
+            "terminal_state_success": terminal_success,
+            "terminal_state_checks": {
+                "Terminal_Butter_In_Occupied_Drawer": terminal_success
+            },
             "control_steps_observed": self._control_step,
             "stage_events": list(self._events),
         }
@@ -332,9 +422,16 @@ class RoboMemArenaTask4Evaluator:
         initial = self._initial_sites[drawer]
         return abs(float(current[1] - initial[1]))
 
-    def _butter_in_top_drawer(self) -> bool:
+    def _required_target_drawer(self) -> str:
+        if self._target_drawer is None:
+            raise RuntimeError("Task 4 checker has not been reset")
+        return self._target_drawer
+
+    def _butter_in_target_drawer(self) -> bool:
         butter = self._body_position("butter_1")
-        region = self._site_position("wooden_cabinet_1_top_region")
+        region = self._site_position(
+            f"wooden_cabinet_1_{self._required_target_drawer()}_region"
+        )
         horizontal = float(np.linalg.norm(butter[:2] - region[:2]))
         height = abs(float(butter[2] - region[2]))
         return (
@@ -372,6 +469,7 @@ class RoboMemArenaOrderedStageEvaluator:
         self.env = env
         self.spec = get_robomemarena_task_spec(task_id)
         self._stage_specs: list[Any] = []
+        self._terminal_specs: list[Any] = []
         self._stage_done: dict[str, bool] = {}
         self._stage_index = 0
         self._stage_start = 0
@@ -384,6 +482,9 @@ class RoboMemArenaOrderedStageEvaluator:
 
     def reset(self) -> None:
         self._stage_specs = reference_stage._task_specs(self.spec.task_id)
+        self._terminal_specs = reference_stage._terminal_task_specs(
+            self.spec.task_id
+        )
         self._stage_done = {
             stage.name: False for stage in self._stage_specs
         }
@@ -442,9 +543,26 @@ class RoboMemArenaOrderedStageEvaluator:
         required_success = reference_stage._stage_success_from_stage_done(
             self.spec.task_id, self._stage_done
         )
-        success = bool(required_success and not self._extra_pour_detected)
+        terminal_state = {
+            spec.name: bool(spec.check_fn(self.env, self._state, 0))
+            for spec in self._terminal_specs
+        }
+        terminal_success = all(terminal_state.values())
+        success = bool(
+            required_success
+            and terminal_success
+            and not self._extra_pour_detected
+        )
+        if self._extra_pour_detected:
+            failure_reason = "extra_pour"
+        elif not required_success:
+            failure_reason = "incomplete_stage"
+        elif not terminal_success:
+            failure_reason = "terminal_state_invalid"
+        else:
+            failure_reason = None
         return {
-            "schema_version": "libero.robomemarena_private_evaluation.v2",
+            "schema_version": "libero.robomemarena_private_evaluation.v3",
             "task_id": self.spec.task_id,
             "success": success,
             "required_stage_count": len(required_names),
@@ -455,13 +573,11 @@ class RoboMemArenaOrderedStageEvaluator:
             "ordered_stage_names": list(self._stage_done),
             "completed_stage_names": completed_names,
             "optional_stage_names": list(self.spec.optional_stage_names),
+            "terminal_state_success": terminal_success,
+            "terminal_state_checks": terminal_state,
             "control_steps_observed": self._control_step,
             "extra_pour_detected": self._extra_pour_detected,
-            "failure_reason": (
-                "extra_pour"
-                if self._extra_pour_detected
-                else None if success else "incomplete_stage"
-            ),
+            "failure_reason": failure_reason,
             "stage_events": list(self._events),
         }
 
@@ -488,13 +604,19 @@ def make_robomemarena_agent_env(
     """Create one task using RoboMemArena physics and our public contract."""
 
     spec = get_robomemarena_task_spec(task_id)
-    if init_state_id != 0:
-        raise ValueError(
-            "RoboMemArena adapter currently supports deterministic reset "
-            "init_state_id 0 only"
-        )
-    robomemarena_source_fingerprint(checkout_root, task_id=task_id)
-    bddl_path = robomemarena_bddl_path(checkout_root, task_id=task_id)
+    robomemarena_task_variant(
+        task_id=task_id, init_state_id=init_state_id
+    )
+    robomemarena_source_fingerprint(
+        checkout_root,
+        task_id=task_id,
+        init_state_id=init_state_id,
+    )
+    bddl_path = robomemarena_bddl_path(
+        checkout_root,
+        task_id=task_id,
+        init_state_id=init_state_id,
+    )
     reserved = {
         "bddl_file_name",
         "camera_names",

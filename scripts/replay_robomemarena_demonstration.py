@@ -64,6 +64,7 @@ def main() -> int:
         get_robomemarena_task_spec,
         robomemarena_bddl_path,
         robomemarena_source_fingerprint,
+        task4_init_state_id_from_recorded_instruction,
     )
     from libero.libero.agent_env.robomemarena_demo import (
         load_robomemarena_full_trajectory,
@@ -73,12 +74,23 @@ def main() -> int:
     trajectory = load_robomemarena_full_trajectory(
         args.dataset, expected_task_id=args.task_id
     )
+    init_state_id = (
+        task4_init_state_id_from_recorded_instruction(
+            trajectory.recorded_instruction
+        )
+        if args.task_id == 4
+        else 0
+    )
     spec = get_robomemarena_task_spec(args.task_id)
     task_source = robomemarena_source_fingerprint(
-        checkout_root, task_id=args.task_id
+        checkout_root,
+        task_id=args.task_id,
+        init_state_id=init_state_id,
     )
     bddl_path = robomemarena_bddl_path(
-        checkout_root, task_id=args.task_id
+        checkout_root,
+        task_id=args.task_id,
+        init_state_id=init_state_id,
     )
     dataset_source = _dataset_source_fingerprint(trajectory.dataset_path)
     output_dir = args.output_dir.expanduser().resolve()
@@ -124,7 +136,9 @@ def main() -> int:
         robots=("Panda",),
         controller="OSC_POSE",
         control_freq=20,
-        init_state_source=f"seeded_reset:{trajectory.seed}",
+        init_state_source=(
+            f"seeded_reset:{trajectory.seed};init_state_id:{init_state_id}"
+        ),
     )
     recorder = P4ReplayMasterRecorder(
         master_dir,
@@ -204,6 +218,8 @@ def main() -> int:
             "source": {
                 "dataset": os.fspath(trajectory.dataset_path),
                 "dataset_seed": trajectory.seed,
+                "init_state_id": init_state_id,
+                "task_variant": task_source["task_variant"],
                 "dataset_recorded_instruction": trajectory.recorded_instruction,
                 "raw_gripper_action_range": list(
                     trajectory.raw_gripper_action_range

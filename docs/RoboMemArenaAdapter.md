@@ -70,12 +70,45 @@ reward, goal state, or stage progress.
 
 ## Ordered success semantics
 
-The evaluator uses the task-specific ordered stage definitions frozen from
+The evaluator uses task-specific ordered stage definitions adapted from
 RoboMemArena. It advances only through the next expected stage. Drawer tasks
 retain their documented optional final-close stage; required success excludes
 that optional stage. Counting tasks use the shared physical pour-event counter
-and reject a detected third pour. `finish` also records the ordinary BDDL final
-goal privately for comparison, but ordered success remains authoritative.
+and reject a detected third pour. For the selected V1 tasks, success also
+revalidates the requested object arrangement in the current simulator state;
+passing through a target region earlier in the episode is not enough. Task 4
+derives its occupied target drawer from the reset state instead of assuming the
+top drawer. `finish` also records the ordinary BDDL final goal privately for
+comparison, but ordered-history plus terminal-state success remains
+authoritative because BDDL alone cannot represent order or event counts.
+
+The contracts are split across three layers:
+
+- `robomemarena_vendor/bddl/*.bddl` defines scene objects, initialization, and
+  ordinary terminal predicates;
+- `robomemarena_vendor/stage/reference_stage.py` defines private ordered,
+  counting, and terminal-state predicates;
+- `robomemarena.py` runs those predicates on every simulator control cycle and
+  reports their result when the Agent calls `finish`.
+
+Three upstream ambiguities are resolved explicitly by the adapter:
+
+- Task 4 uses `init_state_id=0/1/2` for an object initially hidden in the
+  top/middle/bottom drawer. RoboMemArena's HDF5 trajectories contain all three
+  variants, but its released BDDL contains only the top-drawer initialization
+  and its HDF5 files do not contain MuJoCo state. Demonstration replay recovers
+  the omitted variant from the recorded trajectory instruction and selects the
+  matching frozen BDDL.
+- Task 7 accepts the tomato-sauce bottle inside either the left or right
+  bowl-drainer region, matching the disjunction in its BDDL goal.
+- Task 14 interprets “another drawer” literally: after cookies are placed in
+  the top drawer, chocolate may finish in either the middle or bottom drawer.
+  Closing that second drawer remains optional.
+
+Container doors do not have to be closed unless the public instruction says
+so. Object order or identity is not constrained beyond the public instruction
+and ordered-stage contract; positions within a valid target region are not
+slot-assigned.
 
 ## Running
 

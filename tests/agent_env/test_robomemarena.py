@@ -6,13 +6,18 @@ import numpy as np
 import pytest
 
 from libero.libero.agent_env.robomemarena import (
+    RoboMemArenaOrderedStageEvaluator,
     RoboMemArenaTask4Evaluator,
     get_robomemarena_task_spec,
+    robomemarena_bddl_path,
     robomemarena_source_fingerprint,
+    robomemarena_task_variant,
+    task4_init_state_id_from_recorded_instruction,
 )
 from libero.libero.agent_env.robomemarena_demo import (
     load_robomemarena_full_trajectory,
 )
+from libero.libero.agent_env.robomemarena_vendor.stage import reference_stage
 
 
 class _NamedModel:
@@ -37,13 +42,16 @@ def _fake_env():
         "wooden_cabinet_1_middle_region",
         "wooden_cabinet_1_bottom_region",
     ]
-    bodies = ["butter_1"]
+    bodies = ["butter_1", "cream_cheese_1"]
     data = SimpleNamespace(
         site_xpos=np.asarray(
             [[0.0, 0.0, 0.30], [0.0, 0.0, 0.20], [0.0, 0.0, 0.10]],
             dtype=np.float64,
         ),
-        body_xpos=np.asarray([[0.50, 0.50, 0.50]], dtype=np.float64),
+        body_xpos=np.asarray(
+            [[0.50, 0.50, 0.50], [0.0, 0.0, 0.30]],
+            dtype=np.float64,
+        ),
         time=0.0,
     )
     sim = SimpleNamespace(model=_NamedModel(sites, bodies), data=data)
@@ -54,7 +62,54 @@ def test_task4_contract_names_eight_required_and_one_optional_stage():
     spec = get_robomemarena_task_spec(4)
     assert "all drawers in order" in spec.instruction
     assert len(spec.required_stage_names) == 8
-    assert spec.optional_stage_names == ("09_Close_Top_Drawer_Final",)
+    assert spec.required_stage_names[-2:] == (
+        "07_Open_Occupied_Drawer_Again",
+        "08_Put_Butter_Occupied_Drawer",
+    )
+    assert spec.optional_stage_names == (
+        "09_Close_Occupied_Drawer_Final",
+    )
+
+
+def test_task4_all_occupied_drawer_variants_are_frozen_and_addressable():
+    expected = {0: "top", 1: "middle", 2: "bottom"}
+    for init_state_id, drawer in expected.items():
+        path = robomemarena_bddl_path(
+            None, task_id=4, init_state_id=init_state_id
+        )
+        assert path.is_file()
+        text = path.read_text(encoding="utf-8")
+        assert (
+            f"(In cream_cheese_1 wooden_cabinet_1_{drawer}_region)"
+            in text
+        )
+        assert (
+            f"(In butter_1 wooden_cabinet_1_{drawer}_region)" in text
+        )
+        assert robomemarena_task_variant(
+            task_id=4, init_state_id=init_state_id
+        ) == drawer
+
+    with pytest.raises(ValueError, match=r"0 \(top\), 1 \(middle\), or 2"):
+        robomemarena_task_variant(task_id=4, init_state_id=3)
+    with pytest.raises(ValueError, match="supports init_state_id 0 only"):
+        robomemarena_task_variant(task_id=7, init_state_id=1)
+
+
+@pytest.mark.parametrize(
+    ("drawer", "expected_id"),
+    (("top", 0), ("middle", 1), ("bottom", 2)),
+)
+def test_task4_hdf5_instruction_recovers_omitted_scene_variant(
+    drawer, expected_id
+):
+    instruction = (
+        "open all drawers, then open the "
+        f"{drawer} drawer again, place the butter"
+    )
+    assert task4_init_state_id_from_recorded_instruction(instruction) == (
+        expected_id
+    )
 
 
 def test_all_26_tasks_have_frozen_instructions_bddl_and_stage_contracts():
@@ -64,6 +119,95 @@ def test_all_26_tasks_have_frozen_instructions_bddl_and_stage_contracts():
         assert spec.instruction.endswith(".")
         assert spec.bddl_relative_path.endswith(".bddl")
         assert spec.required_stage_names
+
+
+def test_task7_checker_requires_drainer_after_exactly_two_pours():
+    spec = get_robomemarena_task_spec(7)
+
+    assert spec.required_stage_names == (
+        "01_Lift_Tomato_Sauce",
+        "02_Pour_One",
+        "03_Pour_Two",
+        "04_Place_Tomato_Sauce_Bowl_Drainer",
+    )
+    before_drainer = {
+        name: not name.endswith("Bowl_Drainer")
+        for name in spec.required_stage_names
+    }
+    assert not reference_stage._stage_success_from_stage_done(
+        7, before_drainer
+    )
+
+
+def test_task7_drainer_checker_accepts_both_legal_compartments():
+    model = _NamedModel(
+        [
+            "bowl_drainer_1_left_region",
+            "bowl_drainer_1_right_region",
+        ],
+        ["tomato_sauce_1"],
+    )
+    model.site_size = np.asarray(
+        [[0.05, 0.05, 0.05], [0.05, 0.05, 0.05]], dtype=np.float64
+    )
+    data = SimpleNamespace(
+        site_xpos=np.asarray(
+            [[0.0, -0.20, 0.10], [0.0, 0.20, 0.10]],
+            dtype=np.float64,
+        ),
+        site_xmat=np.asarray([np.eye(3), np.eye(3)], dtype=np.float64),
+        body_xpos=np.asarray([[0.0, -0.20, 0.10]], dtype=np.float64),
+    )
+    env = SimpleNamespace(sim=SimpleNamespace(model=model, data=data))
+    check = reference_stage._terminal_task_specs(7)[0].check_fn
+
+    assert check(env, {}, 0)
+    data.body_xpos[0] = np.asarray([0.0, 0.20, 0.10])
+    assert check(env, {}, 0)
+    data.body_xpos[0] = np.asarray([0.0, 0.0, 0.10])
+    assert not check(env, {}, 0)
+
+
+def test_task14_accepts_either_non_top_drawer_as_another_drawer():
+    sites = [
+        "wooden_cabinet_1_top_region",
+        "wooden_cabinet_1_middle_region",
+        "wooden_cabinet_1_bottom_region",
+    ]
+    bodies = ["cookies_1", "chocolate_pudding_1"]
+    model = _NamedModel(sites, bodies)
+    data = SimpleNamespace(
+        site_xpos=np.asarray(
+            [[0.0, 0.0, 0.30], [0.0, 0.0, 0.20], [0.0, 0.0, 0.10]],
+            dtype=np.float64,
+        ),
+        body_xpos=np.asarray(
+            [[0.0, -0.05, 0.30], [0.0, -0.05, 0.20]],
+            dtype=np.float64,
+        ),
+    )
+    env = SimpleNamespace(sim=SimpleNamespace(model=model, data=data))
+    checks = reference_stage._terminal_task_specs(14)
+
+    assert [stage.name for stage in reference_stage._task_specs(14)][-3:] == [
+        "04_Open_Other_Drawer",
+        "05_Place_Chocolate_Other_Drawer",
+        "06_Close_Other_Drawer",
+    ]
+    assert all(stage.check_fn(env, {}, 0) for stage in checks)
+
+    data.body_xpos[1] = np.asarray([0.0, -0.05, 0.10])
+    assert all(stage.check_fn(env, {}, 0) for stage in checks)
+
+    data.body_xpos[1] = np.asarray([0.0, -0.05, 0.30])
+    assert not all(stage.check_fn(env, {}, 0) for stage in checks)
+
+
+def test_task21_instruction_unambiguously_refers_to_butter_current_location():
+    spec = get_robomemarena_task_spec(21)
+
+    assert "where the butter is placed" in spec.instruction
+    assert "where the butter was placed" not in spec.instruction
 
 
 def test_internal_source_fingerprint_needs_no_external_checkout():
@@ -106,13 +250,90 @@ def test_task4_private_checker_requires_order_and_uses_eight_stage_success():
     assert result["success"] is True
     assert result["completed_required_stage_count"] == 8
     assert result["stage_score_percent"] == 100.0
-    assert result["optional_stage_names"] == ["09_Close_Top_Drawer_Final"]
+    assert result["optional_stage_names"] == [
+        "09_Close_Occupied_Drawer_Final"
+    ]
 
     env.sim.data.site_xpos[0, 1] = -0.01
     evaluator.observe({})
     assert evaluator.result()["completed_stage_names"][-1] == (
-        "09_Close_Top_Drawer_Final"
+        "09_Close_Occupied_Drawer_Final"
     )
+
+
+def test_task4_checker_targets_the_drawer_that_was_initially_occupied():
+    env = _fake_env()
+    env.sim.data.body_xpos[1] = env.sim.data.site_xpos[2] + np.asarray(
+        [0.01, 0.01, 0.01]
+    )
+    evaluator = RoboMemArenaTask4Evaluator(env)
+    evaluator.reset()
+
+    for site_index, y_position in (
+        (0, -0.12),
+        (0, -0.01),
+        (1, -0.12),
+        (1, -0.01),
+        (2, -0.12),
+        (2, -0.01),
+        (2, -0.12),
+    ):
+        env.sim.data.site_xpos[site_index, 1] = y_position
+        evaluator.observe({})
+
+    env.sim.data.body_xpos[0] = env.sim.data.site_xpos[2] + np.asarray(
+        [0.02, 0.02, 0.02]
+    )
+    evaluator.observe({})
+
+    assert evaluator.result()["success"] is True
+
+
+def test_ordered_checker_revalidates_terminal_state(monkeypatch):
+    env = _fake_env()
+    terminal = {"valid": True}
+    stage_names = get_robomemarena_task_spec(1).required_stage_names
+    monkeypatch.setattr(
+        reference_stage,
+        "_task_specs",
+        lambda task_id: [
+            reference_stage.StageSpec(
+                name, lambda env, state, start: True
+            )
+            for name in stage_names
+        ],
+    )
+    monkeypatch.setattr(
+        reference_stage,
+        "_terminal_task_specs",
+        lambda task_id: [
+            reference_stage.StageSpec(
+                "Terminal_Target",
+                lambda env, state, start: terminal["valid"],
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        reference_stage,
+        "_build_initial_state",
+        lambda env: {"step_idx": 0, "tilt_angles": []},
+    )
+    monkeypatch.setattr(
+        reference_stage,
+        "_update_state",
+        lambda obs, state: state.update(step_idx=state["step_idx"] + 1),
+    )
+
+    evaluator = RoboMemArenaOrderedStageEvaluator(env, task_id=1)
+    evaluator.reset()
+    evaluator.observe({})
+    evaluator.observe({})
+    assert evaluator.result()["success"] is True
+
+    terminal["valid"] = False
+    result = evaluator.result()
+    assert result["success"] is False
+    assert result["failure_reason"] == "terminal_state_invalid"
 
 
 def test_source_fingerprint_requires_clean_versioned_task_inputs(tmp_path):

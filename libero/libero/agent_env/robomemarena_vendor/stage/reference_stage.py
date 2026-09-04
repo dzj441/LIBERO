@@ -22,12 +22,12 @@ class StageSpec:
     check_fn: Callable[[Any, dict[str, Any], int], bool]
 
 DRAWER_TASK_OPTIONAL_FINAL_STAGE = {
-    4: "09_Close_Top_Drawer_Final",
+    4: "09_Close_Occupied_Drawer_Final",
     5: "09_Close_Middle_Drawer_Final",
     11: "06_Close_Middle_Drawer",
     12: "04_Close_Middle_Drawer",
     13: "04_Close_Middle_Drawer",
-    14: "06_Close_Middle_Drawer",
+    14: "06_Close_Other_Drawer",
     17: "04_Close_Middle_Drawer",
 }
 
@@ -345,6 +345,49 @@ def _in_container_site(
 
     return check
 
+
+def _in_any_site_box(
+    obj_name: str,
+    site_names: tuple[str, ...],
+) -> Callable[[Any, dict[str, Any], int], bool]:
+    """Match LIBERO's point-in-site-box predicate for an explicit union."""
+
+    def check(env: Any, state: dict[str, Any], stage_start: int) -> bool:
+        del state, stage_start
+        obj_pos = _current_body_pos(env, obj_name)
+        if obj_pos is None:
+            return False
+        for site_name in site_names:
+            site_id = None
+            for candidate in _name_variants(site_name):
+                try:
+                    site_id = env.sim.model.site_name2id(candidate)
+                    break
+                except Exception:
+                    continue
+            if site_id is None:
+                continue
+            site_pos = np.asarray(
+                env.sim.data.site_xpos[site_id], dtype=np.float32
+            )
+            site_mat = np.asarray(
+                env.sim.data.site_xmat[site_id], dtype=np.float32
+            ).reshape(3, 3)
+            site_size = np.asarray(
+                env.sim.model.site_size[site_id], dtype=np.float32
+            )
+            # Keep parity with SiteObject.in_box in the frozen LIBERO fork.
+            total_size = np.abs(site_mat @ site_size)
+            lower = site_pos - total_size
+            upper = site_pos + total_size
+            lower[2] -= 0.02
+            upper[2] += 0.05
+            if bool(np.all(obj_pos > lower) and np.all(obj_pos < upper)):
+                return True
+        return False
+
+    return check
+
 def _in_drawer_radius(
     obj_name: str,
     region_name: str,
@@ -379,6 +422,143 @@ def _in_drawer_y_window(
         in_y = float(region_pos[1] + y_low_offset) < float(obj_pos[1]) < float(region_pos[1] + y_high_offset)
         in_z = abs(float(obj_pos[2] - region_pos[2])) < z_thresh
         return in_x and in_y and in_z
+
+    return check
+
+
+def _initially_occupied_drawer(
+    state: dict[str, Any],
+    obj_name: str = "cream_cheese_1",
+) -> str | None:
+    obj_pos = _initial_body_pos(state, obj_name)
+    if obj_pos is None:
+        return None
+    candidates: list[tuple[float, str]] = []
+    for drawer in ("top", "middle", "bottom"):
+        region_pos = _initial_site_pos(
+            state, f"wooden_cabinet_1_{drawer}_region"
+        )
+        if region_pos is not None:
+            candidates.append(
+                (float(np.linalg.norm(obj_pos - region_pos)), drawer)
+            )
+    if not candidates:
+        return None
+    return min(candidates)[1]
+
+
+def _occupied_drawer_open(
+    threshold: float,
+) -> Callable[[Any, dict[str, Any], int], bool]:
+    def check(env: Any, state: dict[str, Any], stage_start: int) -> bool:
+        drawer = _initially_occupied_drawer(state)
+        if drawer is None:
+            return False
+        return _drawer_open_abs(
+            f"wooden_cabinet_1_{drawer}_region", None, threshold
+        )(env, state, stage_start)
+
+    return check
+
+
+def _occupied_drawer_closed(
+    threshold: float,
+) -> Callable[[Any, dict[str, Any], int], bool]:
+    def check(env: Any, state: dict[str, Any], stage_start: int) -> bool:
+        drawer = _initially_occupied_drawer(state)
+        if drawer is None:
+            return False
+        return _drawer_closed_abs(
+            f"wooden_cabinet_1_{drawer}_region", None, threshold
+        )(env, state, stage_start)
+
+    return check
+
+
+def _in_occupied_drawer(
+    obj_name: str,
+    horizontal_thresh: float,
+    z_thresh: float,
+) -> Callable[[Any, dict[str, Any], int], bool]:
+    def check(env: Any, state: dict[str, Any], stage_start: int) -> bool:
+        drawer = _initially_occupied_drawer(state)
+        if drawer is None:
+            return False
+        return _in_drawer_radius(
+            obj_name,
+            f"wooden_cabinet_1_{drawer}_region",
+            horizontal_thresh,
+            z_thresh,
+        )(env, state, stage_start)
+
+    return check
+
+
+def _any_drawer_open(
+    drawers: tuple[str, ...],
+    threshold: float,
+) -> Callable[[Any, dict[str, Any], int], bool]:
+    def check(env: Any, state: dict[str, Any], stage_start: int) -> bool:
+        return any(
+            _drawer_open_abs(
+                f"wooden_cabinet_1_{drawer}_region", None, threshold
+            )(env, state, stage_start)
+            for drawer in drawers
+        )
+
+    return check
+
+
+def _in_any_drawer(
+    obj_name: str,
+    drawers: tuple[str, ...],
+    x_thresh: float,
+    y_low_offset: float,
+    y_high_offset: float,
+    z_thresh: float,
+) -> Callable[[Any, dict[str, Any], int], bool]:
+    def check(env: Any, state: dict[str, Any], stage_start: int) -> bool:
+        return any(
+            _in_drawer_y_window(
+                obj_name,
+                f"wooden_cabinet_1_{drawer}_region",
+                x_thresh,
+                y_low_offset,
+                y_high_offset,
+                z_thresh,
+            )(env, state, stage_start)
+            for drawer in drawers
+        )
+
+    return check
+
+
+def _drawer_containing_object_closed(
+    obj_name: str,
+    drawers: tuple[str, ...],
+    *,
+    x_thresh: float,
+    y_low_offset: float,
+    y_high_offset: float,
+    z_thresh: float,
+    closed_threshold: float,
+) -> Callable[[Any, dict[str, Any], int], bool]:
+    def check(env: Any, state: dict[str, Any], stage_start: int) -> bool:
+        for drawer in drawers:
+            region_name = f"wooden_cabinet_1_{drawer}_region"
+            if not _in_drawer_y_window(
+                obj_name,
+                region_name,
+                x_thresh,
+                y_low_offset,
+                y_high_offset,
+                z_thresh,
+            )(env, state, stage_start):
+                continue
+            return _drawer_closed_abs(
+                region_name, None, closed_threshold
+            )(env, state, stage_start)
+        return False
 
     return check
 
@@ -757,9 +937,18 @@ def _task_specs(task_id: int) -> list[StageSpec]:
             StageSpec("04_Close_Middle_Drawer", _drawer_closed_abs("wooden_cabinet_1_middle_region", None, 0.08)),
             StageSpec("05_Open_Bottom_Drawer", _drawer_open_abs("wooden_cabinet_1_bottom_region", None, 0.10)),
             StageSpec("06_Close_Bottom_Drawer", _drawer_closed_abs("wooden_cabinet_1_bottom_region", None, 0.08)),
-            StageSpec("07_Open_Top_Drawer_Again", _drawer_open_abs("wooden_cabinet_1_top_region", None, 0.10)),
-            StageSpec("08_Put_Butter_Top_Drawer", _in_drawer_radius("butter_1", "wooden_cabinet_1_top_region", 0.25, 0.15)),
-            StageSpec("09_Close_Top_Drawer_Final", _drawer_closed_abs("wooden_cabinet_1_top_region", None, 0.08)),
+            StageSpec(
+                "07_Open_Occupied_Drawer_Again",
+                _occupied_drawer_open(0.10),
+            ),
+            StageSpec(
+                "08_Put_Butter_Occupied_Drawer",
+                _in_occupied_drawer("butter_1", 0.25, 0.15),
+            ),
+            StageSpec(
+                "09_Close_Occupied_Drawer_Final",
+                _occupied_drawer_closed(0.08),
+            ),
         ]
     if task_id == 5:
         return [
@@ -776,7 +965,23 @@ def _task_specs(task_id: int) -> list[StageSpec]:
     if task_id == 6:
         return _counting_pour_stages("tomato_sauce_1", "Tomato_Sauce", "body", "cookies_1")
     if task_id == 7:
-        return _counting_pour_stages("tomato_sauce_1", "Tomato_Sauce", "site", "frypan_1_default_site")
+        return _counting_pour_stages(
+            "tomato_sauce_1",
+            "Tomato_Sauce",
+            "site",
+            "frypan_1_default_site",
+        ) + [
+            StageSpec(
+                "04_Place_Tomato_Sauce_Bowl_Drainer",
+                _in_any_site_box(
+                    "tomato_sauce_1",
+                    (
+                        "bowl_drainer_1_left_region",
+                        "bowl_drainer_1_right_region",
+                    ),
+                ),
+            )
+        ]
     if task_id == 8:
         return _counting_pour_stages("tomato_sauce_1", "Tomato_Sauce", "body", "chocolate_pudding_1")
     if task_id == 9:
@@ -807,13 +1012,38 @@ def _task_specs(task_id: int) -> list[StageSpec]:
             StageSpec("04_Close_Middle_Drawer", _drawer_closed_abs("wooden_cabinet_1_middle_region", None, 0.08)),
         ]
     if task_id == 14:
+        other_drawers = ("middle", "bottom")
         return [
             StageSpec("01_Open_Top_Drawer", _drawer_open_abs("wooden_cabinet_1_top_region", None, 0.10)),
             StageSpec("02_Place_Cookies_Top_Drawer", _in_drawer_y_window("cookies_1", "wooden_cabinet_1_top_region", 0.15, -0.20, 0.10, 0.10)),
             StageSpec("03_Close_Top_Drawer", _drawer_closed_abs("wooden_cabinet_1_top_region", None, 0.08)),
-            StageSpec("04_Open_Middle_Drawer", _drawer_open_abs("wooden_cabinet_1_middle_region", None, 0.10)),
-            StageSpec("05_Place_Chocolate_Middle_Drawer", _in_drawer_y_window("chocolate_pudding_1", "wooden_cabinet_1_middle_region", 0.15, -0.20, 0.10, 0.10)),
-            StageSpec("06_Close_Middle_Drawer", _drawer_closed_abs("wooden_cabinet_1_middle_region", None, 0.08)),
+            StageSpec(
+                "04_Open_Other_Drawer",
+                _any_drawer_open(other_drawers, 0.10),
+            ),
+            StageSpec(
+                "05_Place_Chocolate_Other_Drawer",
+                _in_any_drawer(
+                    "chocolate_pudding_1",
+                    other_drawers,
+                    0.15,
+                    -0.20,
+                    0.10,
+                    0.10,
+                ),
+            ),
+            StageSpec(
+                "06_Close_Other_Drawer",
+                _drawer_containing_object_closed(
+                    "chocolate_pudding_1",
+                    other_drawers,
+                    x_thresh=0.15,
+                    y_low_offset=-0.20,
+                    y_high_offset=0.10,
+                    z_thresh=0.10,
+                    closed_threshold=0.08,
+                ),
+            ),
         ]
     if task_id == 15:
         return _counting_pour_stages("milk_1", "Milk", "body", "butter_1")
@@ -874,6 +1104,139 @@ def _task_specs(task_id: int) -> list[StageSpec]:
             StageSpec("02_Place_Cream_Cheese_Plate2", _on_plate("cream_cheese_1", "plate_2")),
         ]
     raise ValueError(f"Unsupported task_id={task_id}")
+
+
+def _terminal_task_specs(task_id: int) -> list[StageSpec]:
+    """Persistent terminal conditions for the selected V1 task subset.
+
+    Ordered stages establish that the requested history occurred. These pure
+    checks additionally ensure that a later collision or corrective action did
+    not undo the requested final arrangement before ``finish``.
+    """
+
+    if task_id == 1:
+        return [
+            StageSpec(
+                "Terminal_Cookies_In_Basket",
+                _in_container_body(
+                    "cookies_1", "basket_1", 0.12, -0.05, 0.20
+                ),
+            ),
+            StageSpec(
+                "Terminal_Tomato_Sauce_In_Basket",
+                _in_container_body(
+                    "tomato_sauce_1", "basket_1", 0.12, -0.05, 0.20
+                ),
+            ),
+        ]
+    if task_id == 4:
+        return [
+            StageSpec(
+                "Terminal_Butter_In_Occupied_Drawer",
+                _in_occupied_drawer("butter_1", 0.25, 0.15),
+            )
+        ]
+    if task_id == 7:
+        return [
+            StageSpec(
+                "Terminal_Tomato_Sauce_In_Bowl_Drainer",
+                _in_any_site_box(
+                    "tomato_sauce_1",
+                    (
+                        "bowl_drainer_1_left_region",
+                        "bowl_drainer_1_right_region",
+                    ),
+                ),
+            )
+        ]
+    if task_id == 12:
+        return [
+            StageSpec(
+                "Terminal_Cookies_In_Middle_Drawer",
+                _in_container_site(
+                    "cookies_1",
+                    "wooden_cabinet_1_middle_region",
+                    0.15,
+                    0.15,
+                    -0.05,
+                    0.15,
+                ),
+            ),
+            StageSpec(
+                "Terminal_Chocolate_In_Middle_Drawer",
+                _in_container_site(
+                    "chocolate_pudding_1",
+                    "wooden_cabinet_1_middle_region",
+                    0.15,
+                    0.15,
+                    -0.05,
+                    0.15,
+                ),
+            ),
+        ]
+    if task_id == 14:
+        return [
+            StageSpec(
+                "Terminal_Cookies_In_Top_Drawer",
+                _in_drawer_y_window(
+                    "cookies_1",
+                    "wooden_cabinet_1_top_region",
+                    0.15,
+                    -0.20,
+                    0.10,
+                    0.10,
+                ),
+            ),
+            StageSpec(
+                "Terminal_Chocolate_In_Other_Drawer",
+                _in_any_drawer(
+                    "chocolate_pudding_1",
+                    ("middle", "bottom"),
+                    0.15,
+                    -0.20,
+                    0.10,
+                    0.10,
+                ),
+            ),
+        ]
+    if task_id == 19:
+        return [
+            StageSpec(
+                "Terminal_Tomato_Sauce_In_Cabinet2",
+                _cabinet2("tomato_sauce_1", 0.30, 0.10, 0.30),
+            ),
+            StageSpec(
+                "Terminal_Milk_In_Cabinet2",
+                _cabinet2("milk_1", 0.30, 0.10, 0.30),
+            ),
+            StageSpec(
+                "Terminal_Orange_Juice_In_Cabinet2",
+                _cabinet2("orange_juice_1", 0.30, 0.10, 0.30),
+            ),
+        ]
+    if task_id == 21:
+        return [
+            StageSpec(
+                "Terminal_Butter_In_Microwave",
+                _in_microwave("butter_1"),
+            ),
+            StageSpec(
+                "Terminal_Chocolate_In_Microwave",
+                _in_microwave("chocolate_pudding_1"),
+            ),
+        ]
+    if task_id == 26:
+        return [
+            StageSpec(
+                "Terminal_Chocolate_Pudding_On_Plate2",
+                _on_plate("chocolate_pudding_1", "plate_2"),
+            ),
+            StageSpec(
+                "Terminal_Cream_Cheese_On_Plate2",
+                _on_plate("cream_cheese_1", "plate_2"),
+            ),
+        ]
+    return []
 
 def _goal_override_check(task_id: int) -> Callable[[Any, dict[str, bool]], bool] | None:
     if task_id in {6, 7, 8, 9, 10, 15, 16, 18, 19, 22}:

@@ -57,7 +57,7 @@ TASK_INSTRUCTIONS = {
     18: "Pick and place chocolate and butter from cabinet1 to cabinet2, respectively.",
     19: "Pick and place tomato sauce, milk, and orange juice from cabinet1 to cabinet2.",
     20: "Put cookies into the microwave and then put chocolate into the location where the cookies were placed.",
-    21: "Put butter into the microwave and then put chocolate into the location where the butter was placed.",
+    21: "Put butter into the microwave and then put chocolate into the location where the butter is placed.",
     22: "Pour tomato sauce over cookies twice, then put the cookies into the microwave.",
     23: "Put cream into the microwave and then put popcorn into the location where the cream was placed.",
     24: "Put cookies into the microwave and then put popcorn into the location where the cookies were placed.",

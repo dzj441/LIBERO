@@ -163,6 +163,7 @@ def main() -> int:
         task_source_fingerprint = robomemarena_source_fingerprint(
             args.robomemarena_root,
             task_id=args.task_id,
+            init_state_id=args.init_state_id,
         )
         agent_env = make_robomemarena_agent_env(
             checkout_root=args.robomemarena_root,
